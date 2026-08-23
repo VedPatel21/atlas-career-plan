@@ -1,0 +1,22 @@
+{
+  "name": "atlas-career-plan",
+  "version": "2.4.0",
+  "private": true,
+  "description": "ATLAS — Local-first career GPS for progressing toward professional Software, ML, and AI Engineering.",
+  "scripts": {
+    "test": "node --check data.js state.js app.js && node tests/smoke.test.js",
+    "check": "node --check data.js state.js app.js",
+    "start": "python3 -m http.server 4173",
+    "dev": "python3 -m http.server 4173"
+  },
+  "keywords": [
+    "career-gps",
+    "software-engineering",
+    "machine-learning",
+    "ai-engineering",
+    "local-first",
+    "roadmap"
+  ],
+  "author": "Ved Patel",
+  "license": "MIT"
+}
