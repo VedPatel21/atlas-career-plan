@@ -1,0 +1,16 @@
+{
+  "application": "ATLAS Career Architecture",
+  "schemaVersion": 1,
+  "roadmapVersion": "1.0-test",
+  "state": {
+    "schemaVersion": 1,
+    "progress": {
+      "docker": {
+        "progress": "completed",
+        "evidenceStatus": "already-proven",
+        "note": "Imported browser QA fixture"
+      }
+    },
+    "evidence": []
+  }
+}
