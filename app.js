@@ -546,7 +546,7 @@
                     <span class="video-status ${ytCourse.status === 'VERIFIED' ? 'verified' : 'unverified'}">${escapeHTML(ytCourse.status)}</span>
                   </div>
                   <p><b>Why selected:</b> ${escapeHTML(ytCourse.whySelected)}</p>
-                  <p><b>Selected chapters:</b> ${escapeHTML(ytCourse.selectedSections)}</p>
+                  <p><b>Selected chapters:</b> ${escapeHTML(ytCourse.nodeSelections?.[item.id] || ytCourse.selectedSections)}</p>
                   ${ytCourse.skip ? `<p><b>Skip:</b> ${escapeHTML(ytCourse.skip)}</p>` : ''}
                   <p><b>Done when:</b> ${escapeHTML(ytCourse.doneWhen)}</p>
                   ${externalLink(ytCourse.url, 'Open YouTube Course')}

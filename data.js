@@ -823,7 +823,7 @@
     "cost": "Free",
     "length": "9 lectures · selected",
     "stage": "swe-core",
-    "relevantSections": "Shell and command-line environment (L1–L2), development environment and tools (L3), debugging and profiling (L4), version control and Git (L5), packaging and shipping code (L6), agentic coding (L7), code quality (L9).",
+    "relevantSections": "Selected capability-specific lectures across shell, development environment, debugging, version control, packaging, and code quality.",
     "skipSections": "Skim anything already proven. Agentic Coding (L7) is informational; do not treat it as a SWE Core prerequisite.",
     "lastVerified": "26 Aug 2026",
     "status": "current",
@@ -1356,9 +1356,9 @@
     "cost": "Free",
     "length": "Substantial, self-paced",
     "stage": "ai-systems",
-    "relevantSections": "Retrieval, vector search, RAG, evaluation, monitoring, reranking and end-to-end LLM applications.",
+    "relevantSections": "Selected modules across agentic RAG (Module 1), vector search (Module 2), evaluation (Module 4), and monitoring (Module 5) applied to specific capability requirements.",
     "skipSections": "Certificate and cohort scheduling.",
-    "lastVerified": "13 Aug 2026",
+    "lastVerified": "26 Aug 2026",
     "status": "current",
     "alternativeId": null,
     "type": "PRIMARY LEARNING",
@@ -1591,8 +1591,7 @@
   {
     "id": "YT1",
     "nodeIds": [
-      "testing",
-      "basic-ci"
+      "testing"
     ],
     "title": "Pytest Tutorial – How to Test Python Code",
     "creator": "freeCodeCamp.org / Rithmic",
@@ -1781,7 +1780,14 @@
     "level": "Beginner to Intermediate",
     "whySelected": "Practical, project-centric classical machine learning workflow: problem framing, data preparation, train/val/test splits, regression/classification, trees, cross-validation, and error analysis.",
     "whatItTeaches": "Linear/logistic regression, decision trees, random forests, gradient boosting, hyperparameter tuning, metrics (Precision, Recall, F1, ROC-AUC), and leakage prevention.",
-    "selectedSections": "Focus on Modules 1–4 (Linear Models, Tree Models, Evaluation, Pipelines); skip Kaggle leaderboard sessions",
+    "selectedSections": "Focus on Machine Learning Project Approach, Data Preparation, Linear/Tree Models, and Reproducible Workflows (see capability-specific recipes for exact focus)",
+    "nodeSelections": {
+      "ml-problem-framing": "Machine Learning Project Approach, relevant beginning of Project From Scratch, baseline framing, metric choice, train/validation/test split reasoning",
+      "ml-data-splits": "Data preparation, feature handling, train/validation/test split, leakage avoidance, project preparation sections",
+      "ml-models": "Linear Regression, Logistic Regression, Decision Trees, Random Forests, relevant model-comparison sections",
+      "ml-evaluation": "Evaluation-related parts of the course where applicable (rely on ML Zoomcamp Module 4 and Google ML Crash Course for structured evaluation metrics and error slices)",
+      "ml-reproducibility": "Project From Scratch, reproducible workflow, experiment organization, repeatable training/evaluation process"
+    },
     "skip": "Kaggle competition leaderboard tricks and overfitting-to-competition tricks",
     "doneWhen": "You can take raw tabular data, prepare it without leakage, train and compare models against a simple baseline, and analyze error slices.",
     "lastVerified": "26 Aug 2026",
@@ -1804,7 +1810,14 @@
     "level": "Intermediate",
     "whySelected": "Gold standard open-source curriculum for transitioning ML models into deployable, observable services with MLflow, Docker, and monitoring.",
     "whatItTeaches": "Experiment tracking with MLflow, orchestration pipelines with Prefect/Mage, model registries, web service model deployment with Flask/FastAPI, monitoring data drift with Evidently.",
-    "selectedSections": "Capability-specific: experiment-tracking → Module 2 (MLflow Tracking); ml-pipelines → Module 3 (Orchestration and Pipelines); model-serving → Module 4 (Deployment); ml-monitoring → Module 5 (Monitoring and Drift Detection); ml-deployment → Modules 4 + 6 (Deployment and Best Practices/Testing)",
+    "selectedSections": "Module 2 (Experiment Tracking), Module 3 (Pipelines), Module 4 (Model Deployment), Module 5 (Monitoring), and Module 6 (Best Practices & CI/CD)",
+    "nodeSelections": {
+      "experiment-tracking": "Module 2 (MLflow Tracking)",
+      "ml-pipelines": "Module 3 (Orchestration and Pipelines)",
+      "model-serving": "Module 4 (Deployment)",
+      "ml-monitoring": "Module 5 (Monitoring and Drift Detection)",
+      "ml-deployment": "Modules 4 + 6 (Deployment and Best Practices/Testing)"
+    },
     "skip": "Complex multi-cloud setups, Terraform, and Kafka until project architecture requires them",
     "doneWhen": "You can log model experiments, serve predictions via an API, containerize the service, and monitor basic inference latency/drift.",
     "lastVerified": "26 Aug 2026",
@@ -1825,7 +1838,12 @@
     "level": "Beginner to Intermediate",
     "whySelected": "Hands-on, code-first mastery of PyTorch tensors, datasets/DataLoaders, custom nn.Modules, training loops, evaluation, and transfer learning.",
     "whatItTeaches": "Tensors, PyTorch workflow, neural network classification/regression, custom datasets, modular code organization, transfer learning, experiment tracking.",
-    "selectedSections": "Capability-specific: dl-mechanics → Modules 00 (Fundamentals), 01 (Workflow), 02 (Classification — forward/backward/loss intuition); pytorch → Modules 00 (Fundamentals), 01 (Workflow), 04 (Custom Datasets and DataLoaders); dl-debugging → relevant parts of Modules 01, 02, and 04 (training loops, loss curves, eval mode)",
+    "selectedSections": "Modules 00 (Fundamentals), 01 (Workflow), 02 (Classification), and 04 (Custom Datasets and DataLoaders)",
+    "nodeSelections": {
+      "dl-mechanics": "Modules 00 (Fundamentals), 01 (Workflow), 02 (Classification — forward/backward/loss intuition)",
+      "pytorch": "Modules 00 (Fundamentals), 01 (Workflow), 04 (Custom Datasets and DataLoaders)",
+      "dl-debugging": "Relevant parts of Modules 01, 02, and 04 (training loops, loss curves, eval mode)"
+    },
     "skip": "Modules 05+ (Transfer Learning, Paper Replication, Model Deployment) unless the project specifically needs them",
     "doneWhen": "You can build, train, evaluate, and debug a custom or adapted PyTorch model on a real dataset.",
     "lastVerified": "26 Aug 2026",
@@ -1846,7 +1864,12 @@
     "level": "Intermediate",
     "whySelected": "First-principles implementation of autograd (micrograd), backpropagation, language modeling, multi-layer perceptrons, and GPT from scratch in raw Python and PyTorch.",
     "whatItTeaches": "Autograd mechanics, computational graphs, backprop math, n-gram vs MLP models, batch norm, manual backprop, and building nanoGPT from scratch.",
-    "selectedSections": "Capability-specific: dl-mechanics → \"The spelled-out intro to neural networks and backpropagation: building micrograd\" + \"Building makemore\" Part 1 (backprop and MLP intuition); embeddings-attention → \"Let's build the GPT Tokenizer\" + \"Let's build GPT: from scratch, in code\" (embeddings, positional encoding, causal masking, multi-head attention); transformers → \"Let's build GPT: from scratch, in code\" (full transformer forward pass and autoregressive generation)",
+    "selectedSections": "Building micrograd, makemore MLP, GPT Tokenizer, and Let's build GPT from scratch",
+    "nodeSelections": {
+      "dl-mechanics": "The spelled-out intro to neural networks and backpropagation: building micrograd + Building makemore Part 1 (backprop and MLP intuition)",
+      "embeddings-attention": "Let's build the GPT Tokenizer + Let's build GPT: from scratch, in code (embeddings, positional encoding, causal masking, multi-head attention)",
+      "transformers": "Let's build GPT: from scratch, in code (full transformer forward pass and autoregressive generation)"
+    },
     "skip": "Intermediate makemore videos (Parts 2–5) are supplementary; skip manual analytical backprop derivations if calculus intuition is already firm",
     "doneWhen": "You understand how tokens flow through multi-head self-attention and how backpropagation updates weights.",
     "lastVerified": "26 Aug 2026",
@@ -1875,8 +1898,7 @@
   {
     "id": "YT15",
     "nodeIds": [
-      "system-design",
-      "cloud-fundamentals"
+      "system-design"
     ],
     "title": "System Design for Beginners Course",
     "creator": "freeCodeCamp.org / Gaurav Sen",
@@ -1929,8 +1951,15 @@
     "level": "Beginner to Intermediate",
     "whySelected": "The definitive course on professional developer tooling: shell mastery, command-line environment, development tooling, debugging and profiling, version control, and code quality.",
     "whatItTeaches": "Shell navigation, command-line environment, development environment and tools, debugging and profiling, Git version control, packaging and shipping, agentic coding (informational), security essentials, code quality.",
-    "selectedSections": "Capability-specific: python-engineering → L2 Command-line Environment, L3 Development Environment and Tools, L6 Packaging and Shipping Code, L9 Code Quality; git-workflow → L5 Version Control and Git, L8 Beyond the Code; debugging → L4 Debugging and Profiling, L9 Code Quality; code-quality → L3 Development Environment and Tools, L9 Code Quality; linux-cli → L1 Introduction to the Shell, L2 Command-line Environment",
-    "skip": "L7 Agentic Coding is informational only — do not treat as a SWE Core prerequisite; skip deep cryptographic math",
+    "selectedSections": "Selected lectures across developer tooling, shell, Git, debugging, packaging, and code quality (see capability-specific recipes for exact lecture assignments)",
+    "nodeSelections": {
+      "python-engineering": "Lecture 2 — Command-line Environment, Lecture 3 — Development Environment and Tools, Lecture 6 — Packaging and Shipping Code, Lecture 9 — Code Quality",
+      "git-workflow": "Lecture 5 — Version Control and Git, Lecture 8 — Beyond the Code",
+      "debugging": "Lecture 4 — Debugging and Profiling, Lecture 9 — Code Quality",
+      "code-quality": "Lecture 3 — Development Environment and Tools, Lecture 9 — Code Quality",
+      "linux-cli": "Lecture 1 — Course Overview + Introduction to the Shell, Lecture 2 — Command-line Environment"
+    },
+    "skip": "Skim anything already proven. Agentic Coding (Lecture 7) is informational; do not treat it as a SWE Core prerequisite.",
     "doneWhen": "You can use the shell comfortably, write automation scripts, navigate Git history, and profile code execution.",
     "lastVerified": "26 Aug 2026",
     "status": "VERIFIED"
@@ -5208,6 +5237,51 @@
 ];
 
   const taskResourceContext = {
+  "linux-cli": {
+    "R1": {
+      "role": "PRIMARY LEARNING",
+      "why": "Foundational shell navigation, command composition, and CLI environment productivity.",
+      "selected": "Lecture 1 — Course Overview + Introduction to the Shell, Lecture 2 — Command-line Environment",
+      "repeat": "Return when scripting CLI workflows or piping tools together.",
+      "stop": "Stop when you can navigate the shell, manipulate text streams, and configure your CLI environment."
+    }
+  },
+  "python-engineering": {
+    "R1": {
+      "role": "PRIMARY LEARNING",
+      "why": "MIT Missing Semester provides essential Python developer tooling, environment setup, and packaging workflows.",
+      "selected": "Lecture 2 — Command-line Environment, Lecture 3 — Development Environment and Tools, Lecture 6 — Packaging and Shipping Code, Lecture 9 — Code Quality",
+      "repeat": "Return when managing virtual environments, packaging, or CLI tooling.",
+      "stop": "Stop when you can package Python modules and maintain a reproducible CLI workflow."
+    }
+  },
+  "debugging": {
+    "R1": {
+      "role": "PRIMARY LEARNING",
+      "why": "Learn systematic profiling and debugging tools instead of ad-hoc print statements.",
+      "selected": "Lecture 4 — Debugging and Profiling, Lecture 9 — Code Quality",
+      "repeat": "Return when diagnosing performance bottlenecks or isolating reproducible bugs.",
+      "stop": "Stop when you can systematically reproduce, trace, and profile code execution."
+    }
+  },
+  "code-quality": {
+    "R1": {
+      "role": "PRIMARY LEARNING",
+      "why": "Establish automated linting, code formatting, and maintainable project conventions.",
+      "selected": "Lecture 3 — Development Environment and Tools, Lecture 9 — Code Quality",
+      "repeat": "Return when configuring formatting, linters, or static quality checks.",
+      "stop": "Stop when automated quality checks prevent regressions on code changes."
+    }
+  },
+  "git-workflow": {
+    "R1": {
+      "role": "PRIMARY LEARNING",
+      "why": "Master Git version control, branch management, and collaborative workflow beyond raw commits.",
+      "selected": "Lecture 5 — Version Control and Git, Lecture 8 — Beyond the Code",
+      "repeat": "Return when branching, rebasing, or pull-request history needs structuring.",
+      "stop": "Stop when you can navigate Git history, manage branches cleanly, and write clear PRs."
+    }
+  },
   "testing": {
     "R4": {
       "role": "PRIMARY — learn and implement now",
@@ -5258,6 +5332,51 @@
       "selected": "Tables, joins, constraints, transactions, indexes, EXPLAIN and migrations.",
       "repeat": "Return when a concrete query, integrity or migration decision appears.",
       "stop": "Stop when the selected schema and query decisions can be justified with evidence."
+    }
+  },
+  "retrieval-rag": {
+    "R24": {
+      "role": "PRIMARY LLM COURSE",
+      "why": "Comprehensive reference for RAG architectures, vector search, and agentic retrieval patterns.",
+      "selected": "Module 1 — Agentic RAG, Module 2 — Vector Search, relevant Best Practices sections",
+      "repeat": "Return when designing chunking strategies, hybrid search, or vector index pipelines.",
+      "stop": "Stop when you can index documents, retrieve relevant context, and evaluate baseline retrieval."
+    }
+  },
+  "llm-evals": {
+    "R24": {
+      "role": "PRIMARY EVALUATION REFERENCE",
+      "why": "Structured framework for evaluating retrieval quality, answer correctness, and LLM output metrics.",
+      "selected": "Module 4 — Evaluation",
+      "repeat": "Return when measuring hit rate, MRR, answer relevance, or LLM-as-judge metrics.",
+      "stop": "Stop when you have automated evaluation metrics measuring retrieval and response quality."
+    }
+  },
+  "ai-observability": {
+    "R24": {
+      "role": "OBSERVABILITY & MONITORING REFERENCE",
+      "why": "Practical telemetry and monitoring patterns for deployed LLM applications.",
+      "selected": "Module 5 — Monitoring",
+      "repeat": "Return when adding tracing, latency monitoring, or response telemetry to LLM services.",
+      "stop": "Stop when you can trace request lifecycles and monitor model latency/drift."
+    }
+  },
+  "feedback-loops": {
+    "R24": {
+      "role": "CONTINUOUS EVALUATION REFERENCE",
+      "why": "Connecting production monitoring and evaluation to detect regressions and refine prompts/data.",
+      "selected": "Module 4 — Evaluation, Module 5 — Monitoring",
+      "repeat": "Return when implementing regression test suites or continuous evaluation pipelines.",
+      "stop": "Stop when monitored production data informs regression test loops."
+    }
+  },
+  "ai-economics": {
+    "R24": {
+      "role": "SUPPORTING CONTEXT",
+      "why": "Use LLM Zoomcamp only as supporting context for monitored LLM applications; primary evidence for latency/cost comes from the ATLAS benchmarking lab and cloud/operations references.",
+      "selected": "Use LLM Zoomcamp only as supporting context for monitored LLM applications; primary evidence for latency/cost comes from the ATLAS benchmarking lab and cloud/operations references.",
+      "repeat": "Return when benchmarking LLM inference latency or budgeting token costs.",
+      "stop": "Stop when you can measure tokens, latency waterfalls, and cost trade-offs."
     }
   },
   "production-deployment": {
