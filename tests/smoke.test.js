@@ -9,11 +9,18 @@ const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+const curriculumContract = require('./curriculum-contract');
+const curriculumBaseline = require('./curriculum-baseline.json');
 
 const dataContext = { window: {} };
 vm.createContext(dataContext);
 vm.runInContext(fs.readFileSync(path.join(root, 'data.js'), 'utf8'), dataContext, { filename: 'data.js' });
 const data = dataContext.window.ATLAS_DATA;
+
+const currentContract = curriculumContract(data);
+for (const [section, hash] of Object.entries(curriculumBaseline)) {
+  assert.equal(currentContract[section], hash, `Curriculum changed in ${section}`);
+}
 
 assert.equal(data.roadmapVersion, '2.4.0');
 assert.equal(data.phases.length, 9, 'all nine dependency stages must exist');
@@ -103,16 +110,19 @@ assert.ok(data.education && data.education.planningHorizon && data.education.pol
 assert.equal(data.education.universitySnapshot.programs.length, 5);
 
 // DOM & UI checks
-['home','map','projects','readiness','resources','education','checkpoint'].forEach((id) => {
+['home','map','learn','projects','readiness','resources','education','settingsPanel'].forEach((id) => {
   assert.match(html, new RegExp(`id=["']${id}["']`), `missing section ${id}`);
 });
 assert.match(html, /id="workingTaskContainer"/);
 assert.match(html, /id="aiNativeBanner"/);
 assert.match(html, /id="youtubeCourseGrid"/);
 assert.match(html, /id="internshipChecklistContainer"/);
-assert.match(css, /\.working-task-card/);
-assert.match(css, /\.ai-native-banner/);
-assert.match(css, /\.yt-course-card/);
+assert.equal((html.match(/class="nav-link"/g) || []).length, 6, 'learning workspace must stay within the existing navigation');
+assert.match(html, /id="continueLearning"/);
+assert.match(html, /id="glossaryGrid"/);
+assert.match(css, /\.workspace-section/);
+assert.match(css, /\.youtube-course-card/);
+assert.doesNotMatch(css, /\.node-card\[open\]/);
 assert.match(css, /\.lab-card/);
 
 // State management checks
@@ -176,7 +186,68 @@ const imported = store.importPayload({ roadmapVersion:'2.3.0', state:{ schemaVer
 assert.equal(imported.workingNodeId, 'docker');
 assert.equal(imported.progress.docker.progress, 'in-progress');
 
-console.log('ATLAS v2.4 smoke tests passed: Learner-guided UX, Working Task pinning, YouTube registry, Hands-On Labs, Completion Checks, AI-Native Engineering, Project Ladder, Dynamic Role Readiness, reverified Opportunities, Education & Canada, and local-first persistence.');
+// Exercise the real overview model with the current curriculum and store.
+const appWindow = {
+  ATLAS_DATA: data,
+  ATLAS_STORE: store,
+  matchMedia: () => ({ matches: false })
+};
+const documentBeforeLoad = { readyState: 'loading', addEventListener() {} };
+vm.runInNewContext(appSource, { window: appWindow, document: documentBeforeLoad }, { filename: 'app.js' });
+const overview = appWindow.ATLAS.getOverviewModel;
+const freshModel = overview(initial);
+assert.equal(freshModel.mission.id, 'testing');
+assert.deepEqual(Array.from(freshModel.nextTasks.slice(0, 2), (item) => item.id), ['docker', 'basic-ci']);
+
+const pinnedDepth = overview({ ...initial, workingNodeId: 'system-design' });
+assert.equal(pinnedDepth.mission.id, 'system-design');
+assert.equal(pinnedDepth.missionPhase, data.sweDepth);
+assert.equal(pinnedDepth.nextTasks[0].id, 'testing');
+
+const pinnedNext = overview({ ...initial, workingNodeId: 'docker' });
+assert.equal(pinnedNext.mission.id, 'docker');
+assert.equal(pinnedNext.nextTasks[0].id, 'testing');
+assert.ok(pinnedNext.nextTasks.every((item) => item.id !== 'docker'));
+
+const resumed = overview({
+  ...initial,
+  progress: {
+    ...initial.progress,
+    testing: { ...initial.progress.testing, progress: 'completed' },
+    docker: { ...initial.progress.docker, progress: 'skipped' }
+  }
+});
+assert.equal(resumed.mission.id, 'basic-ci');
+
+const allComplete = {
+  ...initial,
+  progress: Object.fromEntries(allNodes.map((item) => [
+    item.id, { ...initial.progress[item.id], progress: 'completed' }
+  ]))
+};
+assert.equal(overview(allComplete).mission, null);
+assert.equal(overview(allComplete).nextTasks.length, 0);
+assert.equal(overview({ ...allComplete, workingNodeId: 'testing' }).mission.id, 'testing');
+
+// A portable current backup must keep both the current learning state and the original legacy payload.
+store.setWorkingNode('docker');
+store.setNodeState('docker', { note: 'Use a reproducible container build' });
+store.setResourceVerification('R4', { status: 'needs-review', lastVerified: '12 Nov 2026' });
+store.recordCheckpoint({ missionId: 'docker' });
+const saved = store.exportPayload();
+const roundTrip = store.importPayload(saved);
+assert.equal(roundTrip.workingNodeId, 'docker');
+assert.equal(roundTrip.progress.docker.note, 'Use a reproducible container build');
+assert.equal(roundTrip.resourceVerification.R4.status, 'needs-review');
+assert.equal(roundTrip.careerCheckpoint.history[0].snapshot.missionId, 'docker');
+assert.equal(roundTrip.legacyBackup.items['task-p0-w1-1'], true);
+assert.equal(roundTrip.progress['pandas-eda'].progress, 'completed');
+
+const olderBackup = store.importPayload(require('./import-fixture.json'));
+assert.equal(olderBackup.schemaVersion, 2);
+assert.equal(olderBackup.progress.docker.note, 'Imported browser QA fixture');
+assert.equal(olderBackup.progress.testing.progress, 'not-started');
+assert.equal(olderBackup.legacyBackup.taskCount, 2);
 
 // Micro-correction regression tests
 const yt4 = data.youtubeLearning.find(yt => yt.id === 'YT4');
@@ -191,3 +262,5 @@ allNodes.forEach(node => {
   assert.ok(node.completionCheck && node.completionCheck.trim() !== '', `Node ${node.id} must have a specific completionCheck`);
   assert.notStrictEqual(node.completionCheck, 'Completion check has not been configured for this capability.', `Node ${node.id} cannot use the generic completion check fallback`);
 });
+
+console.log('ATLAS smoke tests passed, including curriculum identity, learning recommendations, and state compatibility.');

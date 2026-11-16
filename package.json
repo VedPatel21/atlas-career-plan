@@ -4,8 +4,8 @@
   "private": true,
   "description": "ATLAS — Local-first career GPS for progressing toward professional Software, ML, and AI Engineering.",
   "scripts": {
-    "test": "node --check data.js state.js app.js && node tests/smoke.test.js",
-    "check": "node --check data.js state.js app.js",
+    "test": "npm run check && node tests/smoke.test.js",
+    "check": "node --check data.js && node --check state.js && node --check app.js",
     "start": "python3 -m http.server 4173",
     "dev": "python3 -m http.server 4173"
   },

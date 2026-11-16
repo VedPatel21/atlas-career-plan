@@ -17,11 +17,6 @@
     };
   };
 
-  const saveNodeNote = debounce((id, value) => {
-    STORE.setNodeState(id, { note: value }, false);
-    toast('Capability note saved locally.');
-  }, 350);
-
   const statusClass = (status) => {
     const map = {
       'already-proven': 'status-proven',
@@ -36,37 +31,58 @@
   };
 
   const progressClass = (progress) => `progress-${progress}`;
-  const externalLink = (url, label = 'Open resource') => `<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(label)} ↗</a>`;
+  const externalLink = (url, label = 'Open resource') => `<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(label)} <span aria-hidden="true">↗</span></a>`;
   const listHTML = (items) => items && items.length ? `<ul>${items.map((item) => `<li>${escapeHTML(item)}</li>`).join('')}</ul>` : '<p>—</p>';
 
-  const nodeLookup = new Map([
-    ...DATA.phases.flatMap((phase) => phase.nodes),
-    ...DATA.sweDepth.nodes
-  ].map((item) => [item.id, item]));
+  const tracks = [...DATA.phases, DATA.sweDepth];
+  const capabilityNodes = tracks.flatMap((track) => track.nodes);
+  const nodeLookup = new Map(capabilityNodes.map((node) => [node.id, node]));
+  const nodeTrack = new Map(tracks.flatMap((track) => track.nodes.map((node) => [node.id, track])));
+  const projectLookup = new Map(DATA.projects.map((project) => [project.id, project]));
+  const roles = new Map(DATA.roles.map((role) => [role.id, role]));
+  const opportunities = new Map(DATA.opportunities.map((item) => [item.id, item]));
+  const resources = new Map(DATA.resources.map((item) => [item.id, item]));
+  const courses = new Map(DATA.youtubeLearning.map((item) => [item.id, item]));
+  const glossary = new Map(DATA.glossary.map((item) => [item.term, item]));
+  const educationSections = new Map(DATA.education.sectionNav);
+  const resourceStatuses = ['current', 'still-good', 'needs-review', 'unavailable', 'locked'];
 
-  const projectLookup = new Map(DATA.projects.map((item) => [item.id, item]));
-  const allCapabilityNodes = () => [...DATA.phases.flatMap((phase) => phase.nodes), ...DATA.sweDepth.nodes];
-  
-  const VALID_PRIMARY_VIEWS = ['home', 'map', 'projects', 'readiness', 'resources', 'education'];
   const VIEW_TITLES = {
     home: 'Overview',
     map: 'Career Map',
+    learn: 'Learning',
     projects: 'Projects',
     readiness: 'Careers',
-    resources: 'Learn / Resources',
-    education: 'Education & Canada',
-    checkpoint: 'Settings & Backup'
+    resources: 'Resource Library',
+    education: 'Education & Canada'
   };
+  const routeTargets = {
+    '#experience': { view: 'readiness', heading: 'experienceTitle' },
+    '#opportunities': { view: 'readiness', heading: 'opportunitiesTitle' },
+    '#proof': { view: 'map', heading: 'proofTitle' },
+    '#trajectory': { view: 'map', heading: 'trajectoryTitle' },
+    '#glossary': { view: 'resources', heading: 'glossaryTitle' },
+    '#resources/references': { view: 'resources', heading: 'referencesTitle' },
+    '#resources/courses': { view: 'resources', heading: 'coursesTitle' },
+    '#checkpoint': { view: 'checkpoint' },
+    '#settings': { view: 'checkpoint' }
+  };
+  const learningSections = new Set(['learn', 'practice', 'understanding']);
 
-  let activePrimaryView = 'home';
+  let activeRoute;
+  let activeHash;
   let activeEducationSection = 'overview';
-  let isRendering = false;
+  let mapVisit;
+  let renderedTask;
+  let previousState;
+  let settingsReturnFocus;
+
+  const taskLink = (id, section) => `#learn/${encodeURIComponent(id)}${section ? `/${section}` : ''}`;
 
   function getState() { return STORE.getState(); }
 
   function toast(message) {
-    const region = $('#toastRegion');
-    if (!region) return;
+    const region = $('#settingsPanel').open ? $('#settingsToastRegion') : $('#toastRegion');
     const item = document.createElement('div');
     item.className = 'toast';
     item.textContent = message;
@@ -78,8 +94,18 @@
     return `<span class="status-badge ${statusClass(status)}">${escapeHTML(DATA.statusLabels[status] || status)}</span>`;
   }
 
-  function renderProgressBadge(progress) {
-    return `<span class="status-badge ${progressClass(progress)}">${escapeHTML(DATA.progressLabels[progress] || progress)}</span>`;
+  function renderProgressBadge(progress, attr = '') {
+    return `<span class="status-badge ${progressClass(progress)}" ${attr}>${escapeHTML(DATA.progressLabels[progress])}</span>`;
+  }
+
+  function updateBadge(badge, label, className) {
+    if (!badge) return;
+    badge.className = `status-badge ${className}`;
+    if (badge.textContent !== label) badge.textContent = label;
+  }
+
+  function updateProgressBadge(badge, progress) {
+    updateBadge(badge, DATA.progressLabels[progress], progressClass(progress));
   }
 
   function resourceTypeClass(type) {
@@ -96,669 +122,634 @@
     return `<span class="resource-type-badge ${resourceTypeClass(resource.type)}">${escapeHTML(resource.type)}</span>`;
   }
 
-  function resourceSearchText(resource) {
-    return [
-      resource.id, resource.name, resource.creator, resource.platform, resource.stage, resource.type, resource.purpose,
-      resource.summary, resource.why, resource.teaches, resource.howToUse, resource.relevantSections,
-      resource.skipSections, resource.doneWhen
-    ].join(' ').toLowerCase();
-  }
-
-  function capabilityProgress(nodes, state, baselineOnly = false) {
-    const usable = nodes.filter((item) => item.evidenceStatus !== DATA.status.OPTIONAL && item.evidenceStatus !== DATA.status.NOT_NEEDED && item.evidenceStatus !== DATA.status.LOCKED);
+  function baselineCapabilityCoverage() {
+    const usable = capabilityNodes.filter((item) => ![DATA.status.OPTIONAL, DATA.status.NOT_NEEDED, DATA.status.LOCKED].includes(item.evidenceStatus));
     const totalWeight = usable.reduce((sum, item) => sum + item.weight, 0);
     const achieved = usable.reduce((sum, item) => {
-      const progress = baselineOnly ? item.defaultProgress : state.progress[item.id]?.progress || item.defaultProgress;
+      const progress = item.defaultProgress;
       const multiplier = progress === 'completed' ? 1 : progress === 'in-progress' ? 0.4 : 0;
       return sum + item.weight * multiplier;
     }, 0);
     return totalWeight ? Math.round((achieved / totalWeight) * 100) : 0;
   }
 
-  function baselineCapabilityCoverage() {
-    return capabilityProgress(allCapabilityNodes(), getState(), true);
-  }
-
   function actionCompletionCount(state) {
-    const completedCapabilities = allCapabilityNodes().filter((item) => item.defaultProgress !== 'completed' && state.progress[item.id]?.progress === 'completed').length;
+    const completedCapabilities = capabilityNodes.filter((item) => item.defaultProgress !== 'completed' && state.progress[item.id]?.progress === 'completed').length;
     const completedProjects = DATA.projects.filter((item) => item.status !== 'completed' && state.progress[item.id]?.progress === 'completed').length;
     return completedCapabilities + completedProjects;
   }
 
-  // Learner-guided overview model (decoupled from rigid automated mission queues)
+  function nodeState(item, state) {
+    return state.progress[item.id] || { progress: item.defaultProgress, evidenceStatus: item.evidenceStatus, note: '' };
+  }
+
+  function isSuggested(item, state) {
+    const { progress, evidenceStatus } = nodeState(item, state);
+    return !['completed', 'skipped'].includes(progress)
+      && ![DATA.status.OPTIONAL, DATA.status.NOT_NEEDED, DATA.status.LOCKED].includes(evidenceStatus);
+  }
+
   function getOverviewModel(state = getState()) {
     const currentPhase = DATA.phases.find((phase) => phase.name === DATA.currentPosition.stage) || DATA.phases[0];
-    const workingNodeId = state.workingNodeId || STORE.getWorkingNode?.();
-    const workingNode = workingNodeId ? nodeLookup.get(workingNodeId) : null;
-
-    const effective = (item) => state.progress[item.id] || { progress: item.defaultProgress, evidenceStatus: item.evidenceStatus };
-    const allowed = (item) => ![DATA.status.OPTIONAL, DATA.status.NOT_NEEDED, DATA.status.LOCKED].includes(effective(item).evidenceStatus);
-    const incomplete = (item) => effective(item).progress !== 'completed';
-
-    const missingNow = currentPhase.nodes.filter((item) => allowed(item) && incomplete(item) && effective(item).evidenceStatus === DATA.status.MISSING);
-    const verifyNow = currentPhase.nodes.filter((item) => allowed(item) && incomplete(item) && [DATA.status.LIKELY, DATA.status.PARTIAL].includes(effective(item).evidenceStatus));
-
-    // Core recommended sequence
-    const coreSequence = ['testing', 'docker', 'basic-ci'].map((id) => nodeLookup.get(id)).filter(Boolean);
-
-    let queue = [...missingNow, ...verifyNow];
-    let missionPhase = currentPhase;
-    if (!queue.length) {
-      missionPhase = DATA.phases.find((phase) => phase.nodes.some((item) => allowed(item) && incomplete(item))) || currentPhase;
-      queue = missionPhase.nodes.filter((item) => allowed(item) && incomplete(item));
-    }
-    const mission = workingNode || queue[0] || currentPhase.nodes[0];
-    const nextTasks = missingNow.length && missionPhase.id === currentPhase.id ? missingNow.slice(1, 4) : queue.slice(1, 4);
+    const workingNode = nodeLookup.get(state.workingNodeId) || null;
+    const queue = tracks.flatMap((track) => {
+      const candidates = track.nodes.filter((item) => isSuggested(item, state));
+      return [
+        ...candidates.filter((item) => nodeState(item, state).evidenceStatus === DATA.status.MISSING),
+        ...candidates.filter((item) => nodeState(item, state).evidenceStatus !== DATA.status.MISSING)
+      ];
+    });
+    const recommended = queue[0] || null;
+    const mission = workingNode || recommended;
 
     return {
       currentPhase,
-      missionPhase,
+      recommendedPhase: recommended ? nodeTrack.get(recommended.id) : null,
+      missionPhase: mission ? nodeTrack.get(mission.id) : null,
       mission,
       workingNode,
-      coreSequence,
-      nextTasks,
-      verifyOnce: verifyNow.filter((item) => item.id !== mission.id).slice(0, 3),
-      project: DATA.projects.find((item) => item.id === 'project-1'),
-      role: DATA.roles.find((item) => item.state === 'apply-now') || DATA.roles[0]
+      recommended,
+      nextTasks: queue.filter((item) => item.id !== mission?.id).slice(0, 3),
+      verifyOnce: currentPhase.nodes.filter((item) => item.id !== mission?.id && isSuggested(item, state)
+        && [DATA.status.LIKELY, DATA.status.PARTIAL].includes(nodeState(item, state).evidenceStatus)).slice(0, 3),
+      coreSequence: ['testing', 'docker', 'basic-ci'].map((id) => nodeLookup.get(id)),
+      role: DATA.roles.find((role) => role.state === 'apply-now') || DATA.roles[0],
+      project: DATA.projects[0]
     };
   }
 
-  function getCurrentActionModel(state = getState()) {
-    return getOverviewModel(state);
+  function nextLearningTask(item, state, overview) {
+    if (overview.mission?.id === item.id) return overview.nextTasks[0];
+    const track = nodeTrack.get(item.id);
+    const position = track.nodes.indexOf(item);
+    if (track === overview.recommendedPhase) return overview.recommended;
+    return track.nodes.slice(position + 1).find((candidate) => isSuggested(candidate, state)) || overview.recommended;
   }
 
-  /* =========================================================================
-     PRIMARY VIEW ROUTING & SWITCHING
-     ========================================================================= */
+  function decodeRouteId(value) {
+    try { return decodeURIComponent(value); } catch (_) { return ''; }
+  }
 
-  function switchView(viewId, updateHash = true) {
-    if (viewId === 'checkpoint') {
-      openSettingsPanel();
+  function parseRoute(hash) {
+    if (Object.hasOwn(routeTargets, hash)) return routeTargets[hash];
+    const [view, first, second, ...extra] = hash.slice(1).split('/');
+    const id = decodeRouteId(first || '');
+    if (!first && second === undefined && Object.hasOwn(VIEW_TITLES, view) && view !== 'learn') return { view };
+    if (!extra.length) {
+      if (view === 'learn' && nodeLookup.has(id) && (second === undefined || learningSections.has(second))) {
+        return { view, id, section: second };
+      }
+      if (view === 'projects' && projectLookup.has(id) && second === undefined) return { view, id };
+      if (view === 'readiness' && first === 'role' && roles.has(decodeRouteId(second || ''))) {
+        return { view, id: decodeRouteId(second), type: 'role' };
+      }
+      if (view === 'readiness' && first === 'opportunity' && opportunities.has(decodeRouteId(second || ''))) {
+        return { view, id: decodeRouteId(second), type: 'opportunity' };
+      }
+      if (view === 'resources' && first === 'course' && courses.has(decodeRouteId(second || ''))) {
+        return { view, id: decodeRouteId(second), type: 'course' };
+      }
+      if (view === 'resources' && first === 'glossary' && glossary.has(decodeRouteId(second || ''))) {
+        return { view, id: decodeRouteId(second), type: 'glossary' };
+      }
+      if (view === 'resources' && resources.has(id) && second === undefined) return { view, id };
+      if (view === 'education' && educationSections.has(id) && second === undefined) return { view, id };
+    }
+    if (hash.startsWith('#resource-') && resources.has(hash.slice(10))) return { view: 'resources', id: hash.slice(10) };
+    const educationAnchor = hash.match(/^#education-(tab|panel)-(.+)$/);
+    if (educationAnchor && educationSections.has(educationAnchor[2])) return { view: 'education', id: educationAnchor[2] };
+    if (view === 'learn') return { view: 'learn', unavailable: true };
+    if (Object.hasOwn(VIEW_TITLES, view)) return { view };
+    return { view: 'home' };
+  }
+
+  function selectByData(attribute, value, scope = document) {
+    return scope.querySelector(`[${attribute}="${CSS.escape(value)}"]`);
+  }
+
+  function revealTarget(target) {
+    if (!target) return false;
+    let disclosure = target.closest('details');
+    while (disclosure) {
+      disclosure.open = true;
+      disclosure = disclosure.parentElement.closest('details');
+    }
+    target.scrollIntoView({ block: 'start', behavior: 'instant' });
+    target.focus({ preventScroll: true });
+    return true;
+  }
+
+  function revealRouteTarget(route) {
+    if (route.heading) return revealTarget(document.getElementById(route.heading));
+    if (route.view === 'learn' && route.section) return revealTarget($(`#workspace-${route.section} h2`));
+    if (!route.id || route.view === 'learn') return false;
+    if (route.view === 'education') {
+      showEducationPanel(route.id);
+      return revealTarget(selectByData('data-education-panel', route.id));
+    }
+    if (route.view === 'projects') return revealTarget(selectByData('data-project-id', route.id)?.querySelector('summary'));
+    if (route.type === 'role') return revealTarget(selectByData('data-role-id', route.id)?.querySelector('summary'));
+    if (route.type === 'opportunity') return revealTarget(selectByData('data-opportunity-id', route.id)?.querySelector('h3'));
+    if (route.type === 'course') return revealTarget(selectByData('data-yt-id', route.id)?.querySelector('h3'));
+    if (route.type === 'glossary') return revealTarget(selectByData('data-glossary-term', route.id)?.querySelector('h3'));
+    if (route.view === 'resources') return revealResource(route.id);
+    return false;
+  }
+
+  function restoreMapVisit() {
+    window.scrollTo({ top: mapVisit.scroll, behavior: 'instant' });
+    const row = mapVisit.nodeId && selectByData('data-node-id', mapVisit.nodeId);
+    const link = row && !row.hidden && row.closest('details')?.open ? row.querySelector('a') : null;
+    (link || row?.closest('details')?.querySelector('summary') || $('#mapTitle')).focus({ preventScroll: true });
+  }
+
+  function applyRoute(hash, { initial = false, source } = {}) {
+    const route = parseRoute(hash);
+    closeSearchPanel();
+    if (route.view === 'checkpoint') {
+      if (!activeRoute) applyRoute('#home', { initial });
+      const invoker = source || document.activeElement;
+      closeSidebar();
+      openSettingsPanel(invoker);
       return;
     }
 
-    const targetId = VALID_PRIMARY_VIEWS.includes(viewId) ? viewId : 'home';
-    activePrimaryView = targetId;
-
-    // Show only the target section
+    if ($('#settingsPanel').open) $('#settingsPanel').close();
+    closeSidebar();
+    const previousRoute = activeRoute;
+    if (previousRoute?.view === 'map' && route.view !== 'map') {
+      const row = source?.closest('[data-node-id]') || document.activeElement.closest('[data-node-id]');
+      mapVisit = { scroll: window.scrollY, nodeId: row?.dataset.nodeId };
+    }
+    activeRoute = route;
+    activeHash = hash || '#home';
     $$('.view-section').forEach((section) => {
-      const isTarget = section.id === targetId;
-      section.classList.toggle('active-view', isTarget);
-      if (isTarget) {
-        section.removeAttribute('aria-hidden');
-      } else if (['experience', 'proof', 'glossary', 'opportunities', 'trajectory', 'checkpoint'].includes(section.id)) {
-        section.setAttribute('aria-hidden', 'true');
-      }
+      section.hidden = section.id !== route.view;
     });
-
-    // Update sidebar navigation active links
     $$('.nav-link').forEach((link) => {
-      const isLinkActive = link.getAttribute('href') === `#${targetId}`;
-      link.classList.toggle('active', isLinkActive);
-      link.setAttribute('aria-current', isLinkActive ? 'page' : 'false');
+      const current = link.dataset.section === (route.view === 'learn' ? 'map' : route.view);
+      if (current) link.setAttribute('aria-current', route.view === 'learn' ? 'location' : 'page');
+      else link.removeAttribute('aria-current');
     });
+    $('#currentViewLabel').textContent = VIEW_TITLES[route.view];
 
-    // Update Topbar context label
-    const labelEl = $('#currentViewLabel');
-    if (labelEl) {
-      labelEl.textContent = VIEW_TITLES[targetId] || 'Overview';
+    if (route.view === 'learn' && renderedTask !== (route.id || null)) {
+      renderWorkspace(route.id, getState());
+    }
+    const pageTitle = route.view === 'learn' && route.id ? nodeLookup.get(route.id).name : VIEW_TITLES[route.view];
+    document.title = `${pageTitle} · ATLAS`;
+    if (revealRouteTarget(route)) return;
+    if (route.view === 'map' && previousRoute?.view !== 'map' && mapVisit) {
+      restoreMapVisit();
+      return;
     }
 
-    // Sync hash if requested
-    if (updateHash && window.location.hash !== `#${targetId}`) {
-      window.history.pushState(null, '', `#${targetId}`);
-    }
-
-    // Scroll to top of the view cleanly
     window.scrollTo({ top: 0, behavior: 'instant' });
+    if (!initial) $(`#${route.view} h1`)?.focus({ preventScroll: true });
+  }
+
+  function navigate(hash, source) {
+    if (location.hash !== hash) {
+      const atlasFromMap = activeRoute?.view === 'map' && hash.startsWith('#learn/');
+      history.pushState({ atlasFromMap }, '', hash);
+    }
+    applyRoute(hash, { source });
+  }
+
+  function switchView(viewId, updateHash = true) {
+    if (viewId === 'checkpoint') {
+      openSettingsPanel(document.activeElement);
+      return;
+    }
+    const hash = Object.hasOwn(VIEW_TITLES, viewId) && viewId !== 'learn' ? `#${viewId}` : '#home';
+    if (updateHash) navigate(hash);
+    else applyRoute(hash);
   }
 
   function handleHashChange() {
-    const hash = window.location.hash.replace(/^#/, '');
-    if (hash === 'checkpoint') {
-      openSettingsPanel();
-    } else if (VALID_PRIMARY_VIEWS.includes(hash)) {
-      switchView(hash, false);
-    } else if (!hash) {
-      switchView('home', false);
-    }
+    applyRoute(location.hash);
   }
 
-  /* =========================================================================
-     SETTINGS & CHECKPOINT PANEL
-     ========================================================================= */
-
-  function openSettingsPanel() {
-    $('#settingsPanel')?.removeAttribute('hidden');
-    $('#settingsPanelOverlay')?.removeAttribute('hidden');
-    document.body.classList.add('no-scroll');
-    renderCheckpoint(false);
-    $('#settingsPanelClose')?.focus();
+  function openSettingsPanel(invoker) {
+    const panel = $('#settingsPanel');
+    if (panel.open) return;
+    settingsReturnFocus = invoker;
+    renderCheckpoint();
+    panel.showModal();
   }
 
   function closeSettingsPanel() {
-    $('#settingsPanel')?.setAttribute('hidden', '');
-    $('#settingsPanelOverlay')?.setAttribute('hidden', '');
-    document.body.classList.remove('no-scroll');
-    $('#openSettingsButton')?.focus();
+    $('#settingsPanel').close();
+    if (parseRoute(location.hash).view === 'checkpoint') {
+      history.replaceState(null, '', activeHash || '#home');
+    }
+    if (settingsReturnFocus && !settingsReturnFocus.closest('[hidden], [inert]') && settingsReturnFocus !== document.body) {
+      settingsReturnFocus.focus({ preventScroll: true });
+    } else {
+      (mobileNavigation.matches ? $('#menuButton') : $('#openSettingsButton')).focus({ preventScroll: true });
+    }
   }
 
-  /* =========================================================================
-     RENDER FUNCTIONS (PRESERVING DATA INVARIANTS & CONTEXT)
-     ========================================================================= */
-
-  function renderHome() {
-    const state = getState();
+  function renderHomeReference() {
     const position = DATA.currentPosition;
-    const overview = getOverviewModel(state);
-    const versionEl = $('#roadmapVersion');
-    if (versionEl) versionEl.textContent = `v${DATA.roadmapVersion}`;
-
-    // 1. Position Panel at top (Compact & Clear)
-    const positionPanel = $('#positionPanel');
-    if (positionPanel) {
-      positionPanel.innerHTML = `
-        <div class="position-node">
-          <div class="position-node-main">
-            <span class="kicker"><span class="status-dot"></span>Current Position</span>
-            <h2>${escapeHTML(position.stage)}</h2>
-            <p>${escapeHTML(position.identity)}</p>
-          </div>
-        </div>`;
-    }
-
-    // 2. Active Pinned Task Area (ACTION-FIRST)
-    const workingContainer = $('#workingTaskContainer');
-    if (workingContainer) {
-      if (overview.workingNode) {
-        const wn = overview.workingNode;
-        const wnState = state.progress[wn.id] || { progress: wn.defaultProgress };
-        workingContainer.innerHTML = `
-          <div class="working-task-card">
-            <div class="working-task-badge-row">
-              <span class="pinned-indicator">📌 Pinned Working Task</span>
-              ${renderProgressBadge(wnState.progress)}
-              <button type="button" class="button button-small button-secondary" data-unpin-node="${escapeHTML(wn.id)}">Unpin Task</button>
-            </div>
-            <h2>${escapeHTML(wn.name)}</h2>
-            <p>${escapeHTML(wn.summary)}</p>
-            <div class="working-task-actions">
-              <button class="button button-primary" type="button" data-open-node="${escapeHTML(wn.id)}">Open Full Recipe &amp; Lab →</button>
-            </div>
-          </div>`;
-      } else {
-        workingContainer.innerHTML = `
-          <div class="no-working-task-card">
-            <div class="no-task-content">
-              <span>💡 Tip: Pin a Task</span>
-              <p>You can pin any capability from the <strong>Career Map</strong> using the <em>"Work on this"</em> button to keep it front and center here.</p>
-            </div>
-          </div>`;
-      }
-    }
-
-    // 3. Focus Mission & Queues
-    const missionState = state.progress[overview.mission.id] || overview.mission;
-    const focusMissionEl = $('#focusMission');
-    if (focusMissionEl) {
-      focusMissionEl.innerHTML = `<article class="current-mission-card searchable" data-search="${escapeHTML([overview.mission.name, overview.mission.summary, overview.mission.whyNow, ''].join(' ').toLowerCase())}">
-        <div class="mission-head">
-          <span class="mission-label">${overview.workingNode ? 'Pinned Focus' : 'Recommended Next'}</span>
-          ${renderStatusBadge(missionState.evidenceStatus || overview.mission.evidenceStatus)}
-        </div>
-        <span class="kicker">${escapeHTML(overview.missionPhase.name)} · Core Capability</span>
-        <h2>${escapeHTML(overview.mission.name)}</h2>
-        <p>${escapeHTML(overview.mission.summary)}</p>
-        <div class="mission-why"><span>Why this is next</span><p>${escapeHTML(overview.mission.whyNow)}</p></div>
-        
-        <div class="mission-actions">
-          <button class="button button-primary" type="button" data-open-node="${escapeHTML(overview.mission.id)}">Open Task Recipe &amp; Lab →</button>
-          ${!overview.workingNode || overview.workingNode.id !== overview.mission.id ? `<button class="button button-secondary" type="button" data-pin-node="${escapeHTML(overview.mission.id)}">📌 Work on this</button>` : ''}
-        </div>
-      </article>`;
-    }
-
-    const focusNextEl = $('#focusNextQueue');
-    if (focusNextEl) {
-      focusNextEl.innerHTML = `<aside class="focus-queue-card">
-        <span class="kicker">Core Sequence &amp; Queue</span>
-        <h3>Upcoming Dependencies</h3>
-        <p>Progress along the Core track at your own pace without calendar pressure.</p>
-        <ol>
-          ${overview.nextTasks.length ? overview.nextTasks.map((item) => `<li><button type="button" data-open-node="${escapeHTML(item.id)}"><span>${escapeHTML(item.name)}</span></button></li>`).join('') : '<li>Core capabilities established. Explore deeper specializations in the Career Map.</li>'}
-        </ol>
-      </aside>`;
-    }
-
-    // 4. Focus Support Grid
-    const focusVerifyEl = $('#focusVerify');
-    if (focusVerifyEl) {
-      focusVerifyEl.innerHTML = `<article class="focus-support-card"><span class="kicker">Verify Once</span><h3>Claims to check once</h3>${overview.verifyOnce.length ? `<ul>${overview.verifyOnce.map((item) => `<li><button type="button" class="inline-action" data-open-node="${escapeHTML(item.id)}">${escapeHTML(item.name)}</button></li>`).join('')}</ul>` : '<p>No current verify-once items are waiting.</p>'}<p class="support-note">Do not relearn these by default; verify capability once in code.</p></article>`;
-    }
-
-    const focusProjectEl = $('#focusProject');
-    if (focusProjectEl) {
-      focusProjectEl.innerHTML = `<article class="focus-support-card"><span class="kicker">Current Project</span><h3>${escapeHTML(overview.project.name)}</h3><p>${escapeHTML(overview.project.direction)}</p><button type="button" class="inline-action" data-open-project="${escapeHTML(overview.project.id)}">Open Project 1 →</button></article>`;
-    }
-
-    const focusRoleEl = $('#focusRole');
-    if (focusRoleEl) {
-      focusRoleEl.innerHTML = `<article class="focus-support-card"><span class="kicker">Target Role</span><div class="support-title-row"><h3>${escapeHTML(overview.role.name)}</h3><span class="status-badge status-proven">${escapeHTML(overview.role.label)}</span></div><p>${escapeHTML(overview.role.summary)}</p><button type="button" class="inline-action" data-open-role="${escapeHTML(overview.role.id)}">Open Careers &amp; Readiness →</button></article>`;
-    }
-
-    // 5. AI-Native Engineering Banner
-    const aiBanner = $('#aiNativeBanner');
-    if (aiBanner && DATA.aiNativeEngineering) {
-      const ai = DATA.aiNativeEngineering;
-      aiBanner.innerHTML = `
-        <div class="ai-banner-card">
-          <div class="ai-banner-head">
-            <span class="kicker">Working Principle</span>
-            <h3>${escapeHTML(ai.title)}</h3>
-          </div>
-          <p>${escapeHTML(ai.workingMethod)}</p>
-          <div class="ai-floor-block">
-            <strong>Mandatory AI-Independent Floor:</strong>
-            <ul>
-              ${ai.aiIndependentFloor.map((point) => `<li>${escapeHTML(point)}</li>`).join('')}
-            </ul>
-          </div>
-        </div>`;
-    }
-
-    // 6. Answer Grid (Progressive Disclosure)
-    const cards = [
-      ['Where am I?', position.identity, `Primary stage: ${position.stage}.`],
-      ['What is proven?', 'Software building + early production work', position.foundation],
-      ['What is missing?', 'Production engineering depth', position.mainGap],
-      ['What should I ignore?', 'Later tools and artificial quotas', position.ignoreNow]
-    ];
-    const answerGridEl = $('#answerGrid');
-    if (answerGridEl) {
-      answerGridEl.innerHTML = cards.map(([label, title, body]) => `
-        <article class="answer-card">
-          <span class="answer-label">${escapeHTML(label)}</span>
-          <strong>${escapeHTML(title)}</strong>
-          <p>${escapeHTML(body)}</p>
-        </article>`).join('');
-    }
-
-    // 7. Baseline Audit (Progressive Disclosure)
-    const auditEl = $('#baselineAudit');
-    if (auditEl) {
-      auditEl.innerHTML = `
-        <div class="baseline-audit-head"><div><span class="kicker">Approved current-state calibration</span><h2>Evidence Audit</h2></div><p>Resume claims are not permanent proof. Strong artifacts stay proven; partial skills show only the missing depth.</p></div>
-        <div class="audit-grid">${position.evidenceAudit.map((item) => `<article class="audit-item"><div><strong>${escapeHTML(item.name)}</strong><p>${escapeHTML(item.basis)}</p></div>${renderStatusBadge(item.status)}</article>`).join('')}</div>`;
-    }
-
-    // 8. Migration Notice
-    const notice = $('#migrationNotice');
-    if (notice) {
-      if (state.migration?.from === 'legacy-checkbox-roadmap' || state.legacyBackup) {
-        const backup = state.legacyBackup;
-        notice.hidden = false;
-        notice.innerHTML = `<strong>Legacy progress protected.</strong> ${backup ? `${backup.completedTaskCount} completed items across ${backup.taskCount} old task records were preserved` : 'Old state was preserved'} in the v2 backup payload.`;
-      } else {
-        notice.hidden = true;
-      }
-    }
+    $('#positionPanel').innerHTML = `<h3>${escapeHTML(position.stage)}</h3>
+      <p>${escapeHTML(position.identity)}. ${escapeHTML(position.mainGap)}</p>
+      <p>${escapeHTML(position.foundation)}</p><p>${escapeHTML(position.ignoreNow)}</p>`;
+    $('#baselineAudit').innerHTML = position.evidenceAudit.map((item) => `<article class="audit-item">
+      <div><strong>${escapeHTML(item.name)}</strong><p>${escapeHTML(item.basis)}</p></div>${renderStatusBadge(item.status)}
+    </article>`).join('');
+    const ai = DATA.aiNativeEngineering;
+    $('#aiNativeBanner').innerHTML = `<p>${escapeHTML(ai.workingMethod)}</p><h3>AI-independent skills</h3>${listHTML(ai.aiIndependentFloor)}`;
   }
 
-  function renderArchitecture() {
-    const archStrip = $('#architectureStrip');
-    const currentStage = DATA.currentPosition.stage;
-    if (archStrip) {
-      archStrip.innerHTML = DATA.architecture.map((step, index) => {
-        const isCurrent = step === currentStage || (index === 0 && !DATA.architecture.includes(currentStage));
-        return `
-          <div class="architecture-step ${isCurrent ? 'architecture-step-current' : ''}">
-            <span>${isCurrent ? '● ACTIVE' : `STAGE ${index + 1}`}</span>
-            <strong>${escapeHTML(step)}</strong>
-          </div>`;
-      }).join('');
-    }
+  function updateHome(state, overview) {
+    const task = overview.mission;
+    const progress = $('#currentTaskProgress');
+    progress.hidden = !task;
+    if (task) updateProgressBadge(progress, nodeState(task, state).progress);
+    $('#currentTaskTrack').textContent = task
+      ? [overview.workingNode && 'Pinned', overview.missionPhase.name].filter(Boolean).join(' · ')
+      : '';
+    $('#currentTaskTitle').textContent = task?.name || 'You’re caught up';
+    $('#currentTaskSummary').textContent = task?.summary || 'Explore the Career Map to revisit a capability or choose a new focus.';
+    const link = $('#continueLearning');
+    link.firstChild.textContent = task ? 'Continue learning ' : 'Open Career Map ';
+    link.href = task ? taskLink(task.id) : '#map';
 
-    const sweTrack = $('#sweDepthTrack');
-    if (sweTrack) {
-      sweTrack.innerHTML = `
-        <details class="parallel-track-details">
-          <summary><div><span class="kicker">Parallel depth · not the next phase</span><h3>${escapeHTML(DATA.sweDepth.name)}</h3><p>${escapeHTML(DATA.sweDepth.summary)}</p></div><span class="parallel-track-action">Explore parallel track <span class="chevron">›</span></span></summary>
-          <div class="parallel-track-body">
-            <div class="parallel-explainer"><strong>How to use this track</strong><p>Develop these capabilities alongside later phases when the active project needs them. They run in parallel with the Core phases.</p></div>
-            <div class="track-tags">${DATA.sweDepth.tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join('')}</div>
-            <div class="node-grid">${DATA.sweDepth.nodes.map((item) => renderNode(item, DATA.sweDepth)).join('')}</div>
-          </div>
-        </details>`;
+    const queue = $('#focusNextQueue');
+    const queueIds = overview.nextTasks.map((item) => item.id).join(' ');
+    if (queue.dataset.ids !== queueIds) {
+      queue.dataset.ids = queueIds;
+      queue.innerHTML = overview.nextTasks.map((item) => `<li><a href="${taskLink(item.id)}">
+        <strong>${escapeHTML(item.name)}</strong><span aria-hidden="true">→</span>
+      </a></li>`).join('');
+    }
+    $('#upcomingEmpty').hidden = Boolean(queueIds);
+
+    const notice = $('#migrationNotice');
+    notice.hidden = !state.legacyBackup;
+    if (state.legacyBackup) {
+      notice.textContent = `Your backup preserves ${state.legacyBackup.completedTaskCount} completed items across ${state.legacyBackup.taskCount} legacy task records.`;
     }
   }
 
   function taskResourceUsage(item, resource) {
-    const explicit = DATA.taskResourceContext?.[item.id]?.[resource.id];
-    if (explicit) return explicit;
-    return {
+    return DATA.taskResourceContext[item.id]?.[resource.id] || {
       role: resource.type,
-      why: `Use this resource only for the parts of ${item.name} that the active project or diagnostic has not already proved.`,
+      why: resource.why,
       selected: resource.relevantSections || resource.teaches,
       repeat: `Return when ${item.name} exposes a concrete implementation or reasoning question.`,
       stop: resource.doneWhen
     };
   }
 
-  function renderTaskResource(item, resource) {
-    const usage = taskResourceUsage(item, resource);
+  function getLearningResources(item, state) {
+    const record = (resource) => {
+      const verification = resourceVerification(resource, state);
+      const usage = taskResourceUsage(item, resource);
+      return {
+        id: resource.id, title: resource.name, creator: resource.creator, url: resource.url,
+        type: 'reference', usage, status: verification.status,
+        lastVerified: verification.lastVerified, skip: resource.skipSections,
+        verified: ['current', 'still-good'].includes(verification.status),
+        sections: usage.selected, why: usage.why
+      };
+    };
+    const mapped = item.resourceIds.map((id) => resources.get(id)).filter(Boolean);
+    const alternatives = mapped.map((resource) => resources.get(resource.alternativeId)).filter(Boolean);
+    const references = [...new Set([...mapped, ...alternatives])].map(record);
+    const videos = DATA.orientationVideos.filter((video) => video.nodeIds.includes(item.id)).map((video) => ({
+      ...video, type: 'orientation', verified: video.status === 'VERIFIED', sections: video.understandAfter
+    }));
+    const coursesForTask = DATA.youtubeLearning.filter((course) => course.nodeIds.includes(item.id)).map((course) => ({
+      ...course, type: 'course', why: course.whySelected, verified: course.status === 'VERIFIED',
+      sections: course.nodeSelections?.[item.id] || course.selectedSections
+    }));
+    const mainReference = references.find((resource) => resource.verified && /^primary\b/i.test(resource.usage.role));
+    const recommended = mainReference
+      || coursesForTask.find((course) => course.verified)
+      || videos.find((video) => video.verified)
+      || references.find((resource) => resource.verified);
+    return { recommended, videos, courses: coursesForTask, references };
+  }
+
+  function resourceStatusText(resource) {
+    return resource.type === 'reference' ? resource.status?.replaceAll('-', ' ') : resource.status;
+  }
+
+  function learningResourceLink(resource) {
+    if (['unavailable', 'locked'].includes(resource.status)) return '';
+    const label = resource.type === 'reference' ? 'Open resource' : courseLinkLabel(resource.url);
+    return externalLink(resource.url, label);
+  }
+
+  function courseLinkLabel(url) {
+    return new URL(url).hostname === 'www.youtube.com' ? 'Open on YouTube' : 'Open course';
+  }
+
+  function renderTaskResource(resource) {
+    const typeLabels = { reference: resource.usage?.role, course: 'YouTube course', orientation: 'Orientation video' };
     return `<article class="task-resource-card">
-      <div class="task-resource-head"><div><span>${escapeHTML(resource.id)}</span><strong>${escapeHTML(resource.name)}</strong></div>${renderResourceTypeBadge(resource)}</div>
-      <dl class="task-resource-context">
-        <div><dt>Role here</dt><dd>${escapeHTML(usage.role)}</dd></div>
-        <div><dt>Why selected</dt><dd>${escapeHTML(usage.why)}</dd></div>
-        <div><dt>Use these parts</dt><dd>${escapeHTML(usage.selected)}</dd></div>
-        <div><dt>Return when</dt><dd>${escapeHTML(usage.repeat)}</dd></div>
-        <div><dt>Stop when</dt><dd>${escapeHTML(usage.stop)}</dd></div>
-      </dl>
-      ${externalLink(resource.url, 'Open resource')}
+      <h4>${escapeHTML(resource.title)}</h4>
+      <p class="resource-record">${escapeHTML([typeLabels[resource.type], resource.creator, resource.duration, resource.level, resourceStatusText(resource), resource.lastVerified].filter(Boolean).join(' · '))}</p>
+      ${resource.why ? `<p>${escapeHTML(resource.why)}</p>` : ''}
+      ${resource.sections ? `<p><strong>${resource.type === 'orientation' ? 'Understand afterward' : 'Focus on'}</strong> ${escapeHTML(resource.sections)}</p>` : ''}
+      ${resource.skip ? `<p><strong>Skip</strong> ${escapeHTML(resource.skip)}</p>` : ''}
+      ${resource.usage?.repeat ? `<p>${escapeHTML(resource.usage.repeat)}</p>` : ''}
+      ${resource.usage?.stop || resource.doneWhen ? `<p><strong>Done when</strong> ${escapeHTML(resource.usage?.stop || resource.doneWhen)}</p>` : ''}
+      ${learningResourceLink(resource)}
     </article>`;
   }
 
-  function renderNode(item, parentTrack = null) {
-    const state = getState();
-    const nodeState = state.progress[item.id] || { progress: item.defaultProgress, evidenceStatus: item.evidenceStatus, note: '' };
-    const resources = (item.resourceIds || []).map((id) => DATA.resources.find((resource) => resource.id === id)).filter(Boolean);
-    const video = DATA.orientationVideos?.find((record) => record.nodeIds.includes(item.id));
-    const ytCourse = DATA.youtubeLearning?.find((record) => record.nodeIds.includes(item.id));
-    const teaching = item.teaches?.length ? item.teaches : item.cover;
-    const currentPhaseOrder = DATA.phases.find((phase) => phase.name === DATA.currentPosition.stage)?.order || 1;
-    const laterPhase = parentTrack?.order && parentTrack.order > currentPhaseOrder;
-    const deliberatelyLater = [DATA.status.LOCKED, DATA.status.NOT_NEEDED, DATA.status.OPTIONAL].includes(nodeState.evidenceStatus) || laterPhase;
-    const isPinned = state.workingNodeId === item.id;
+  function renderWorkspaceResources(item, state) {
+    const { recommended, videos, courses, references } = getLearningResources(item, state);
+    const isOrientation = recommended?.type === 'orientation';
+    $('#recommendedResource').innerHTML = recommended ? `
+      <header>
+        <p class="resource-category">Recommended resource</p>
+        <h3>${escapeHTML(recommended.title)}</h3>
+      </header>
+      <div class="recommended-resource-action">${learningResourceLink(recommended)}
+        <small>${escapeHTML([resourceStatusText(recommended), recommended.lastVerified].filter(Boolean).join(' · '))}</small>
+      </div>
+      <div class="recommended-resource-guidance">
+        ${recommended.why ? `<p>${escapeHTML(recommended.why)}</p>` : ''}
+        ${recommended.sections ? `<p><strong>${isOrientation ? 'Understand afterward' : 'Focus on'}</strong> ${escapeHTML(recommended.sections)}</p>` : ''}
+      </div>` : `<p>${videos.length || courses.length || references.length
+        ? 'No mapped resource is currently marked verified and available. Check the recorded statuses in Resource details.'
+        : 'This capability has no mapped resource yet. Use the practice guidance below.'}</p>`;
 
-    const prerequisiteContent = item.prerequisites.length
-      ? listHTML(item.prerequisites)
-      : `<p>${escapeHTML(parentTrack?.prerequisites || 'Use the active project and the preceding dependency as context; no separate prerequisite course is required.')}</p>`;
+    const videoNotice = videos.some((record) => record.verified)
+      ? ''
+      : '<p>No short orientation video has a verified record for this capability.</p>';
+    $('#taskResourcesDetails').innerHTML = `${videoNotice}
+      <div class="task-resource-list">${[...videos, ...courses, ...references].map(renderTaskResource).join('')}</div>`;
+  }
 
+  function renderPractice(item) {
     const lab = item.handsOnLab;
-    const completionCheck = item.completionCheck || item.proof || 'Completion check has not been configured for this capability.';
-    const explainIt = item.explainIt || `Explain the core concepts, failure modes, and architectural trade-offs of ${item.name} to another engineer without reading code verbatim.`;
+    if (!lab) {
+      return `<p>${escapeHTML(item.miniExercise || item.projectApplication || item.ready || item.proof || item.completionCheck)}</p>`;
+    }
+    return `<div class="lab-card">
+      <h3>${escapeHTML(lab.title)}</h3>
+      <p>${escapeHTML(lab.goal)}</p>
+      <ol class="lab-steps">${lab.steps.map((step) => `<li>${escapeHTML(step)}</li>`).join('')}</ol>
+      <div class="lab-outcome"><h4>Expected result</h4><p>${escapeHTML(lab.expectedResult)}</p></div>
+      ${lab.stretch ? `<details class="reference-disclosure stretch-disclosure">
+        <summary>Stretch challenge</summary><div class="reference-body"><p>${escapeHTML(lab.stretch)}</p></div>
+      </details>` : ''}
+    </div>`;
+  }
 
-    const searchText = [
-      item.name, item.summary, item.whatIsThis, item.why, item.whyNow, item.careerConnection, '', item.miniExercise, item.projectApplication, item.unlocks,
-      ...teaching, ...item.cover, ...item.skip, item.proof, completionCheck, explainIt, ...item.prerequisites, ...item.evidenceBasis,
-      video?.title, video?.creator, ytCourse?.title, ytCourse?.creator, ...resources.map(resourceSearchText)
-    ].join(' ').toLowerCase();
+  function renderWorkspace(id, state) {
+    const container = $('#learn');
+    const item = nodeLookup.get(id);
+    renderedTask = item?.id || null;
+    if (!item) {
+      container.innerHTML = `<header class="view-heading"><h1 tabindex="-1">Capability unavailable</h1>
+        <p>Choose a capability from the Career Map.</p><a class="button button-primary" href="#map">Back to Career Map</a></header>`;
+      return;
+    }
 
-    return `
-      <details class="node-card searchable ${isPinned ? 'node-card-pinned' : ''}" data-node-id="${escapeHTML(item.id)}" data-evidence-status="${escapeHTML(nodeState.evidenceStatus)}" data-search="${escapeHTML(searchText)}">
-        <summary class="node-summary">
-          <div>
-            <div class="node-title-row">
-              <h4>${isPinned ? '<span class="pin-badge">📌</span> ' : ''}${escapeHTML(item.name)}</h4>
-              ${renderStatusBadge(nodeState.evidenceStatus)}
-            </div>
-            <p class="node-subtitle">${escapeHTML(item.summary)}</p>
-          </div>
-          ${renderProgressBadge(nodeState.progress)}
-          <span class="chevron">›</span>
+    const track = nodeTrack.get(id);
+    const { progress, evidenceStatus, note } = nodeState(item, state);
+    const prerequisites = item.prerequisites.length ? listHTML(item.prerequisites)
+      : `<p>${escapeHTML(track.prerequisites || 'Use the active project and the preceding dependency as context.')}</p>`;
+    const supporting = [
+      ['Why now', item.whyNow], ['Career connection', item.careerConnection],
+      ['Apply it in a project', item.projectApplication], ['Readiness', item.ready], ['What this unlocks', item.unlocks]
+    ];
+    const topics = [...new Set([...item.teaches, ...item.cover])].filter((topic) => topic !== item.whatIsThis);
+    container.innerHTML = `<header class="workspace-header">
+      <div class="workspace-topline"><a class="plain-link" href="#map" data-back-map>← Back to Career Map</a>
+        <button type="button" class="button button-secondary button-small" data-pin-toggle="${escapeHTML(id)}" aria-pressed="false">Pin task</button>
+      </div>
+      <div class="workspace-meta"><span>${escapeHTML(track === DATA.sweDepth ? track.name + ' · Parallel track' : track.name)}</span>
+        ${renderProgressBadge(progress, 'id="workspaceProgress"')}</div>
+      <h1 tabindex="-1">${escapeHTML(item.name)}</h1>
+      <p>${escapeHTML(item.summary)}</p>
+      <nav class="section-jump-links workspace-jump-links" aria-label="Learning workspace sections">
+        <a href="${taskLink(id, 'learn')}">Learn</a>
+        <a href="${taskLink(id, 'practice')}">Practice</a>
+        <a href="${taskLink(id, 'understanding')}">Check understanding</a>
+        <a class="workspace-next-header" id="workspaceNextHeader" href="#map" aria-label="Next task" hidden>Next&nbsp;→</a>
+      </nav>
+    </header>
+    <section class="workspace-section" id="workspace-learn" aria-labelledby="learnTitle">
+      <h2 id="learnTitle" tabindex="-1">Learn</h2>
+      <div class="workspace-copy">
+        ${item.whatIsThis !== item.summary ? `<p>${escapeHTML(item.whatIsThis)}</p>` : ''}
+        ${item.why !== item.summary && item.why !== item.whatIsThis ? `<p><strong>Why it matters</strong> ${escapeHTML(item.why)}</p>` : ''}
+      </div>
+      <div class="recommended-resource" id="recommendedResource"></div>
+      <details class="reference-disclosure">
+        <summary>Resource details</summary><div class="reference-body" id="taskResourcesDetails"></div>
+      </details>
+    </section>
+    <section class="workspace-section" id="workspace-practice" aria-labelledby="practiceTitle">
+      <h2 id="practiceTitle" tabindex="-1">Practice</h2>
+      ${renderPractice(item)}
+    </section>
+    <section class="workspace-section" id="workspace-understanding" aria-labelledby="understandingTitle">
+      <h2 id="understandingTitle" tabindex="-1">Check understanding</h2>
+      <div class="workspace-copy"><h3>Explain it</h3><p>${escapeHTML(item.explainIt)}</p></div>
+      <label class="completion-checkbox-label">
+        <input type="checkbox" data-completion-check="${escapeHTML(id)}" ${progress === 'completed' ? 'checked' : ''}>
+        <span>${escapeHTML(item.completionCheck)}</span>
+      </label>
+      <div class="workspace-progress-control">
+        <label for="taskProgress">Progress</label>
+        <select id="taskProgress" data-node-progress="${escapeHTML(id)}">${progressOptions(progress)}</select>
+      </div>
+      <details class="reference-disclosure">
+        <summary>Notes</summary>
+        <div class="reference-body"><label for="taskNotes">Task notes</label>
+          <textarea id="taskNotes" data-node-note="${escapeHTML(id)}" maxlength="2000" rows="4" placeholder="Record decisions, edge cases, or questions">${escapeHTML(note)}</textarea>
+        </div>
+      </details>
+      <div class="workspace-next" id="workspaceNext" hidden>
+        <a class="button button-primary" id="nextLearningTask" href="#map"></a>
+      </div>
+    </section>
+    <details class="reference-disclosure workspace-context">
+      <summary>Prerequisites and career context</summary>
+      <div class="reference-body">
+        <h3>Prerequisites</h3>${prerequisites}
+        ${supporting.filter(([, content]) => content).map(([label, content]) => `<h3>${label}</h3><p>${escapeHTML(content)}</p>`).join('')}
+        ${topics.length ? `<h3>Topics to cover</h3>${listHTML(topics)}` : ''}
+        ${item.skip.length ? `<h3>What to skip for now</h3>${listHTML(item.skip)}` : ''}
+        ${item.miniExercise && item.handsOnLab ? `<h3>Mini exercise</h3><p>${escapeHTML(item.miniExercise)}</p>` : ''}
+      </div>
+    </details>
+    <details class="reference-disclosure workspace-context">
+      <summary>Evidence</summary>
+      <div class="reference-body">
+        ${item.evidenceBasis.length ? `<h3>Starting evidence</h3>${listHTML(item.evidenceBasis)}` : ''}
+        ${item.proof && item.proof !== item.completionCheck ? `<h3>Evidence standard</h3><p>${escapeHTML(item.proof)}</p>` : ''}
+        <label for="taskEvidenceStatus">Evidence status</label>
+        <select id="taskEvidenceStatus" data-node-status="${escapeHTML(id)}">${Object.entries(DATA.statusLabels).map(([value, label]) => `<option value="${value}" ${evidenceStatus === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('')}</select>
+      </div>
+    </details>`;
+
+    renderWorkspaceResources(item, state);
+    updateWorkspace(state, getOverviewModel(state));
+  }
+
+  function progressOptions(progress) {
+    return Object.entries(DATA.progressLabels).map(([value, label]) => `<option value="${value}" ${progress === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('');
+  }
+
+  function updateWorkspace(state, overview) {
+    if (!renderedTask) return;
+    const item = nodeLookup.get(renderedTask);
+    const { progress, evidenceStatus, note } = nodeState(item, state);
+    const pinned = state.workingNodeId === item.id;
+    const pinButton = $('#learn [data-pin-toggle]');
+    const checkbox = $('#learn [data-completion-check]');
+    const notes = $('#taskNotes');
+    const next = nextLearningTask(item, state, overview);
+
+    updateProgressBadge($('#workspaceProgress'), progress);
+    $('#taskProgress').value = progress;
+    $('#taskEvidenceStatus').value = evidenceStatus;
+    checkbox.checked = progress === 'completed';
+    pinButton.setAttribute('aria-pressed', String(pinned));
+    pinButton.textContent = pinned ? 'Unpin task' : 'Pin task';
+    if (notes.value !== note) notes.value = note;
+    const nextLink = $('#nextLearningTask');
+    const nextInHeader = $('#workspaceNextHeader');
+    nextInHeader.hidden = progress !== 'completed' || !next;
+    $('#workspaceNext').hidden = nextInHeader.hidden;
+    if (next) {
+      nextLink.textContent = `Next: ${next.name} →`;
+      nextLink.href = taskLink(next.id);
+      nextInHeader.href = nextLink.getAttribute('href');
+    }
+  }
+
+  function renderCapabilityRow(item, state) {
+    return `<li class="capability-row" data-node-id="${escapeHTML(item.id)}">
+      <a href="${taskLink(item.id)}">
+        <strong>${escapeHTML(item.name)}</strong>
+        <span class="capability-state"><span class="capability-context" data-capability-context hidden></span>
+          ${renderProgressBadge(nodeState(item, state).progress, 'data-capability-progress')}
+        </span>
+        <span class="row-arrow" aria-hidden="true">→</span>
+      </a>
+    </li>`;
+  }
+
+  function renderTrack(track, state, open) {
+    const parallel = track === DATA.sweDepth;
+    const phaseContext = [
+      ['Why this phase exists', track.why], ['Prerequisite', track.prerequisites],
+      ['Project milestone', track.proof], ['What this unlocks', track.unlocks],
+      ['Topics in this track', track.tags?.join(' · ')]
+    ].filter(([, value]) => value);
+    return `<details class="phase-card" data-phase-id="${escapeHTML(track.id || 'swe-depth')}" ${open ? 'open' : ''}>
+      <summary class="phase-summary">
+        ${parallel ? '<span class="phase-number" aria-hidden="true">∥</span>' : `<span class="phase-number" aria-hidden="true">${track.order}</span>`}
+        <span class="phase-title"><strong>${escapeHTML(track.name)}</strong><small data-track-context>${parallel ? 'Parallel track' : ''}</small></span>
+        <span class="phase-progress" data-track-progress></span>
+        <span class="chevron" aria-hidden="true">›</span>
+      </summary>
+      <div class="phase-body">
+        <p>${escapeHTML(track.summary)}</p>
+        <ul class="capability-list">${track.nodes.map((item) => renderCapabilityRow(item, state)).join('')}</ul>
+        ${phaseContext.length ? `<details class="reference-disclosure phase-reference"><summary>${parallel ? 'Track context' : 'Phase context'}</summary>
+          <div class="reference-body">${phaseContext.map(([label, value]) => `<h3>${label}</h3><p>${escapeHTML(value)}</p>`).join('')}</div>
+        </details>` : ''}
+      </div>
+    </details>`;
+  }
+
+  function renderPhases(state) {
+    const overview = getOverviewModel(state);
+    const current = overview.recommendedPhase || overview.missionPhase || overview.currentPhase;
+    $('#phaseList').innerHTML = DATA.phases.map((phase) => renderTrack(phase, state, phase === current)).join('');
+    $('#sweDepthTrack').innerHTML = renderTrack(DATA.sweDepth, state, DATA.sweDepth === current);
+  }
+
+  function updateMap(state, overview) {
+    const nextIds = new Set([overview.recommended, ...overview.nextTasks].map((item) => item?.id));
+    for (const group of $$('.phase-card')) {
+      const track = group.dataset.phaseId === 'swe-depth' ? DATA.sweDepth : DATA.phases.find((phase) => phase.id === group.dataset.phaseId);
+      const completed = track.nodes.filter((item) => nodeState(item, state).progress === 'completed').length;
+      $('[data-track-progress]', group).textContent = `${completed}/${track.nodes.length} complete`;
+      $('[data-track-context]', group).textContent = track === DATA.sweDepth ? 'Parallel track'
+        : track === overview.recommendedPhase ? 'Current phase' : '';
+      for (const row of $$('[data-node-id]', group)) {
+        const id = row.dataset.nodeId;
+        const { progress, evidenceStatus } = nodeState(nodeLookup.get(id), state);
+        const context = $('[data-capability-context]', row);
+        row.dataset.progress = progress;
+        row.dataset.evidenceStatus = evidenceStatus;
+        row.dataset.suggested = String(nextIds.has(id));
+        const label = id === state.workingNodeId ? 'Pinned' : id === overview.recommended?.id ? 'Up next' : '';
+        if (context.textContent !== label) context.textContent = label;
+        context.hidden = !label;
+        row.classList.toggle('capability-pinned', id === state.workingNodeId);
+        updateProgressBadge($('[data-capability-progress]', row), progress);
+      }
+    }
+    applyMapFilter();
+  }
+
+  function renderProjects(state) {
+    $('#projectLadder').innerHTML = DATA.projects.map((project) => {
+      const progress = state.progress[project.id]?.progress || project.status;
+      const references = project.resourceIds.map((id) => resources.get(id)).filter(Boolean);
+      const scope = [
+        ['Scope', project.mvp], ['Why this project matters', project.whyThisProblem],
+        ['Who it helps', project.whoItHelps], ['Optional starting project', project.optionalGreenfield],
+        ['What to avoid overbuilding', project.whatNotToOverbuild]
+      ];
+
+      return `<details class="project-card" data-project-id="${escapeHTML(project.id)}">
+        <summary class="project-summary">
+          <span class="project-index" aria-hidden="true">${project.id.split('-').pop()}</span>
+          <span class="project-summary-text"><strong>${escapeHTML(project.name)}</strong><span>${escapeHTML(project.purpose)}</span></span>
+          ${renderProgressBadge(progress, 'data-project-progress')}
+          <span class="chevron" aria-hidden="true">›</span>
         </summary>
-        <div class="node-body">
-          ${deliberatelyLater ? `<div class="why-not-yet"><span>Why not yet?</span><p>${escapeHTML(laterPhase ? `${parentTrack.name} follows the current ${DATA.currentPosition.stage} dependency. Use it for orientation now, then act when the preceding phase evidence is strong enough.` : `${item.name} is deliberately ${DATA.statusLabels[nodeState.evidenceStatus].toLowerCase()}. It should not displace the active dependency or create artificial urgency.`)}</p></div>` : ''}
-
-          <section class="task-recipe" aria-label="${escapeHTML(item.name)} task recipe">
-            <!-- 1. WHAT IS THIS? -->
-            <div class="recipe-block recipe-overview"><span>What is this?</span><p>${escapeHTML(item.whatIsThis)}</p></div>
-
-            <!-- 2. WHY DOES THIS MATTER? -->
-            <div class="recipe-block"><span>Why does this matter?</span><p>${escapeHTML(item.why)}</p></div>
-
-            <!-- 3. WHERE DOES THIS FIT / WHY NOW? -->
-            <div class="recipe-block"><span>Where does this fit? (Why now)</span><p>${escapeHTML(item.whyNow)}</p></div>
-
-            <!-- 4. PREREQUISITES -->
-            <div class="recipe-block"><span>Prerequisites</span>${prerequisiteContent}</div>
-
-            <!-- 5. WATCH FIRST (ORIENTATION VIDEO) -->
-            <div class="recipe-block recipe-video">
-              <span>Watch first · Beginner orientation</span>
-              ${video ? `
-                <div class="video-orientation-head">
-                  <div><strong>${escapeHTML(video.title)}</strong><p>${escapeHTML(video.creator)} · ${escapeHTML(video.duration)} · verified ${escapeHTML(video.lastVerified)}</p></div>
-                  <span class="video-status verified">Verified orientation</span>
-                </div>
-                <p><b>Why this video:</b> ${escapeHTML(video.why)}</p>
-                <p><b>Understand afterward:</b> ${escapeHTML(video.understandAfter)}</p>
-                ${externalLink(video.url, 'Watch on YouTube')}
-              ` : `
-                <div class="video-missing">
-                  <strong>NEEDS VIDEO VERIFICATION</strong>
-                  <p>No standalone short orientation video has passed ATLAS verification for this node yet. Use the free YouTube course or written resources below.</p>
-                </div>
-              `}
-            </div>
-
-            <!-- 6. LEARN FREE ON YOUTUBE -->
-            ${ytCourse ? `
-              <div class="recipe-block recipe-yt-course">
-                <span>Learn Free on YouTube · Verified Course</span>
-                <div class="yt-course-card">
-                  <div class="yt-course-head">
-                    <div>
-                      <strong>${escapeHTML(ytCourse.title)}</strong>
-                      <p>${escapeHTML(ytCourse.creator)} · ${escapeHTML(ytCourse.duration)} · ${escapeHTML(ytCourse.level)}</p>
-                    </div>
-                    <span class="video-status ${ytCourse.status === 'VERIFIED' ? 'verified' : 'unverified'}">${escapeHTML(ytCourse.status)}</span>
-                  </div>
-                  <p><b>Why selected:</b> ${escapeHTML(ytCourse.whySelected)}</p>
-                  <p><b>Selected chapters:</b> ${escapeHTML(ytCourse.nodeSelections?.[item.id] || ytCourse.selectedSections)}</p>
-                  ${ytCourse.skip ? `<p><b>Skip:</b> ${escapeHTML(ytCourse.skip)}</p>` : ''}
-                  <p><b>Done when:</b> ${escapeHTML(ytCourse.doneWhen)}</p>
-                  ${externalLink(ytCourse.url, 'Open YouTube Course')}
-                </div>
-              </div>
-            ` : ''}
-
-            <!-- 7. OFFICIAL & REFERENCE RESOURCES -->
-            <div class="recipe-block recipe-resources">
-              <span>Official &amp; Reference Resources</span>
-              ${resources.length ? `<div class="task-resource-list">${resources.map((resource) => renderTaskResource(item, resource)).join('')}</div>` : '<p>Use the active project and a small diagnostic. Add a reference only when a concrete gap appears.</p>'}
-            </div>
-
-            <!-- 8. BUILD THIS (HANDS-ON LAB) -->
-            ${lab ? `
-              <div class="recipe-block recipe-lab">
-                <span>Build this · Hands-On Lab</span>
-                <div class="lab-card">
-                  <h4>${escapeHTML(lab.title)}</h4>
-                  <p class="lab-goal"><b>Goal:</b> ${escapeHTML(lab.goal)}</p>
-                  <div class="lab-steps">
-                    <strong>Step-by-step Execution:</strong>
-                    <ol>
-                      ${lab.steps.map((step) => `<li>${escapeHTML(step)}</li>`).join('')}
-                    </ol>
-                  </div>
-                  <div class="lab-outcome">
-                    <strong>Expected Result:</strong>
-                    <p>${escapeHTML(lab.expectedResult)}</p>
-                  </div>
-                  ${lab.stretch ? `
-                    <div class="lab-stretch">
-                      <strong>Stretch Challenge:</strong>
-                      <p>${escapeHTML(lab.stretch)}</p>
-                    </div>
-                  ` : ''}
-                </div>
-              </div>
-            ` : `
-              <div class="recipe-block recipe-first">
-                <span>First Action</span>
-                <p>${escapeHTML('')}</p>
-                ${item.miniExercise ? `<p><b>Mini exercise:</b> ${escapeHTML(item.miniExercise)}</p>` : ''}
-              </div>
-            `}
-
-            <!-- 9. EXPLAIN IT -->
-            <div class="recipe-block recipe-explain">
-              <span>Explain it · Technical Articulation</span>
-              <p>${escapeHTML(explainIt)}</p>
-            </div>
-
-            <!-- 10. WHAT TO SKIP -->
-            ${item.skip.length ? `
-              <div class="recipe-block recipe-skip">
-                <span>What to skip for now</span>
-                ${listHTML(item.skip)}
-              </div>
-            ` : ''}
-
-            <!-- 11. COMPLETION CHECK (SELF-ASSESSMENT) -->
-            <div class="recipe-block recipe-done">
-              <span>Completion Check · Self-Assessment</span>
-              <div class="completion-check-box">
-                <label class="completion-checkbox-label">
-                  <input type="checkbox" data-completion-check="${escapeHTML(item.id)}" ${nodeState.progress === 'completed' ? 'checked' : ''}>
-                  <span>${escapeHTML(completionCheck)}</span>
-                </label>
-              </div>
-            </div>
-
-            <!-- 12. WHAT THIS UNLOCKS -->
-            <div class="recipe-block">
-              <span>What this unlocks</span>
-              <p>${escapeHTML(item.unlocks)}</p>
-            </div>
+        <div class="project-body">
+          <section class="project-direction">
+            <h2>Goal</h2><p>${escapeHTML(project.direction)}</p>
+            ${project.recommendedBuild ? `<h3>Suggested build</h3><p>${escapeHTML(project.recommendedBuild)}</p>` : ''}
           </section>
-
-          <!-- Node Controls -->
-          <div class="node-controls">
-            <label>Progress
-              <select data-node-progress="${escapeHTML(item.id)}">
-                ${Object.entries(DATA.progressLabels).map(([value, label]) => `<option value="${value}" ${nodeState.progress === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('')}
-              </select>
-            </label>
-            <label>Evidence status
-              <select data-node-status="${escapeHTML(item.id)}">
-                ${Object.entries(DATA.statusLabels).map(([value, label]) => `<option value="${value}" ${nodeState.evidenceStatus === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('')}
-              </select>
-            </label>
-            <button class="button ${isPinned ? 'button-secondary' : 'button-primary'} button-small" type="button" data-pin-toggle="${escapeHTML(item.id)}">
-              ${isPinned ? '📌 Unpin Task' : '📌 Work on this'}
-            </button>
-          </div>
-          <label class="node-note">Notes &amp; Architecture Insights
-            <textarea data-node-note="${escapeHTML(item.id)}" maxlength="2000" placeholder="Record implementation decisions, edge cases, or reflections…">${escapeHTML(nodeState.note || '')}</textarea>
+          <section>
+            <h2>What to demonstrate</h2>${listHTML(project.mustProve)}
+          </section>
+          <section class="project-proof">
+            <h2>Completion standard</h2><p>${escapeHTML(project.completionCheck || project.proof)}</p>
+          </section>
+          <label class="workspace-progress-control">Milestone progress
+            <select data-node-progress="${escapeHTML(project.id)}">${progressOptions(progress)}</select>
           </label>
+          <details class="reference-disclosure">
+            <summary>Scope and references</summary>
+            <div class="reference-body">
+              ${project.domainBadge ? `<p>${escapeHTML(project.domainBadge)}</p>` : ''}
+              ${scope.filter(([, value]) => value).map(([label, value]) => `<h3>${label}</h3><p>${escapeHTML(value)}</p>`).join('')}
+              ${project.technicalChallenges?.length ? `<h3>Technical challenges</h3>${listHTML(project.technicalChallenges)}` : ''}
+              ${project.guardrails.length ? `<h3>Guardrails</h3>${listHTML(project.guardrails)}` : ''}
+              ${project.proof !== project.completionCheck ? `<h3>Evidence</h3><p>${escapeHTML(project.proof)}</p>` : ''}
+              ${references.length ? `<h3>Targeted references</h3><ul>${references.map((resource) => `<li>${externalLink(resource.url, resource.name)}</li>`).join('')}</ul>` : ''}
+            </div>
+          </details>
         </div>
       </details>`;
-  }
-
-  function renderPhases() {
-    const state = getState();
-    const phaseListEl = $('#phaseList');
-    if (!phaseListEl) return;
-
-    phaseListEl.innerHTML = DATA.phases.map((phase, index) => {
-      const progress = capabilityProgress(phase.nodes, state);
-      const counts = phase.nodes.reduce((summary, item) => {
-        const status = state.progress[item.id]?.evidenceStatus || item.evidenceStatus;
-        if (status === DATA.status.PROVEN) summary.proven += 1;
-        else if (status === DATA.status.LIKELY) summary.verify += 1;
-        else if (status === DATA.status.PARTIAL) summary.partial += 1;
-        else if (status === DATA.status.MISSING) summary.missing += 1;
-        else summary.later += 1;
-        return summary;
-      }, { proven: 0, verify: 0, partial: 0, missing: 0, later: 0 });
-
-      const evidenceSummary = [`${counts.proven} proven`, `${counts.verify} verify once`, `${counts.partial} partial`, `${counts.missing} missing`, counts.later ? `${counts.later} later` : ''].filter(Boolean).join(' · ');
-
-      return `
-        <details class="phase-card" data-phase-id="${escapeHTML(phase.id)}" ${index === 0 ? 'open' : ''}>
-          <summary class="phase-summary">
-            <span class="phase-number">${String(phase.order).padStart(2, '0')}</span>
-            <div class="phase-copy"><h3>${escapeHTML(phase.name)}</h3><p>${escapeHTML(phase.summary)}</p></div>
-            <div class="phase-progress"><strong>${escapeHTML(evidenceSummary)}</strong><span>${progress}% coverage</span></div>
-            <span class="chevron">›</span>
-          </summary>
-          <div class="phase-body">
-            <div class="phase-meta">
-              <div class="meta-card"><span>Why this phase exists</span><p>${escapeHTML(phase.why)}</p></div>
-              <div class="meta-card"><span>Prerequisite</span><p>${escapeHTML(phase.prerequisites)}</p></div>
-              <div class="meta-card"><span>Project milestone</span><p>${escapeHTML(phase.proof)}</p></div>
-            </div>
-            <div class="node-grid">${phase.nodes.map((item) => renderNode(item, phase)).join('')}</div>
-            <div class="meta-card" style="margin-top:14px"><span>What this unlocks</span><p>${escapeHTML(phase.unlocks)}</p></div>
-          </div>
-        </details>`;
     }).join('');
   }
 
-  function renderProjects() {
-    const state = getState();
-    const projectLadderEl = $('#projectLadder');
-    if (!projectLadderEl) return;
-
-    projectLadderEl.innerHTML = DATA.projects.map((project, index) => {
-      const projectState = state.progress[project.id] || { progress: project.status };
-      const resources = (project.resourceIds || []).map((id) => DATA.resources.find((resource) => resource.id === id)).filter(Boolean);
-      const searchText = [
-        project.name, project.purpose, project.direction, project.domainBadge, project.recommendedBuild, project.whyThisProblem,
-        ...project.mustProve, ...project.guardrails, project.proof, ...resources.map(resourceSearchText)
-      ].join(' ').toLowerCase();
-
-      // Clean, intentional project numbering P01, P02, P03...
-      const projectIndexLabel = `P${String(index + 1).padStart(2, '0')}`;
-
-      return `
-        <details class="project-card searchable" data-project-id="${escapeHTML(project.id)}" data-search="${escapeHTML(searchText)}" ${index === 0 ? 'open' : ''}>
-          <summary class="project-summary">
-            <span class="project-index">${projectIndexLabel}</span>
-            <div>
-              <div class="project-title-row">
-                <h3>${escapeHTML(project.name)}</h3>
-                ${project.domainBadge ? `<span class="domain-badge">${escapeHTML(project.domainBadge)}</span>` : ''}
-              </div>
-              <p>${escapeHTML(project.purpose)}</p>
-            </div>
-            ${renderProgressBadge(projectState.progress)}
-            <span class="chevron">›</span>
-          </summary>
-          <div class="project-body">
-            <div class="project-guide-grid">
-              <div class="project-column">
-                <h4>Direction &amp; Candidate</h4>
-                <p>${escapeHTML(project.direction)}</p>
-                ${project.optionalGreenfield ? `<div class="greenfield-callout"><strong>Optional Greenfield:</strong> <p>${escapeHTML(project.optionalGreenfield)}</p></div>` : ''}
-                ${project.recommendedBuild ? `<div class="recommended-build-box"><strong>Recommended Build:</strong> <p>${escapeHTML(project.recommendedBuild)}</p></div>` : ''}
-                ${resources.length ? `
-                  <div class="project-resources">
-                    <span>Targeted References</span>
-                    ${resources.map((resource) => `<a href="${escapeHTML(resource.url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(resource.id)} · ${escapeHTML(resource.name)}</a>`).join('')}
-                  </div>` : ''}
-                <label class="eyebrow" style="margin-top: 14px; display: block;">Milestone State
-                  <select data-node-progress="${escapeHTML(project.id)}" style="display:block;margin-top:6px;width:100%">
-                    ${Object.entries(DATA.progressLabels).map(([value, label]) => `<option value="${value}" ${projectState.progress === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('')}
-                  </select>
-                </label>
-              </div>
-
-              <div class="project-column">
-                <h4>Problem &amp; Value</h4>
-                <p><b>Why this problem:</b> ${escapeHTML(project.whyThisProblem || project.purpose)}</p>
-                <p><b>Who it helps:</b> ${escapeHTML(project.whoItHelps || 'Engineers and end users needing reliable software.')}</p>
-                <p><b>MVP Scope:</b> ${escapeHTML(project.mvp || project.mustProve[0])}</p>
-                ${project.technicalChallenges ? `<div><b>Key Technical Challenges:</b>${listHTML(project.technicalChallenges)}</div>` : ''}
-              </div>
-
-              <div class="project-column">
-                <h4>Must Prove &amp; Guardrails</h4>
-                <div><b>Must Prove:</b>${listHTML(project.mustProve)}</div>
-                ${project.whatNotToOverbuild ? `<div class="overbuild-warning"><b>What NOT to Overbuild:</b> <p>${escapeHTML(project.whatNotToOverbuild)}</p></div>` : ''}
-              </div>
-            </div>
-
-            <div class="project-proof">
-              <strong>Completion Check / Standard:</strong>
-              <p>${escapeHTML(project.completionCheck || project.proof)}</p>
-            </div>
-          </div>
-        </details>`;
-    }).join('');
+  function updateProjects(state, changedProjects) {
+    for (const project of changedProjects) {
+      const progress = state.progress[project.id]?.progress || project.status;
+      const card = selectByData('data-project-id', project.id);
+      updateProgressBadge($('[data-project-progress]', card), progress);
+      $('select', card).value = progress;
+    }
   }
 
   // Dynamic Role Readiness Calculation
@@ -801,9 +792,9 @@
     }
   }
 
-  function renderReadiness() {
-    const state = getState();
-    const stateClasses = { 'apply-now': 'status-proven', 'apply-selectively': 'status-likely', 'prepare-first': 'status-partial', 'not-yet': 'status-not-needed' };
+  const readinessClasses = { 'apply-now': 'status-proven', 'apply-selectively': 'status-likely', 'prepare-first': 'status-partial', 'not-yet': 'status-not-needed' };
+
+  function renderReadiness(state) {
     const platformById = new Map(DATA.discoveryStack.map((item) => [item.id, item]));
     const roleSearchUrl = (platform, query) => platform.searchPattern
       ? platform.searchPattern.replace('{query}', encodeURIComponent(query))
@@ -811,29 +802,20 @@
 
     const readinessGridEl = $('#readinessGrid');
     if (readinessGridEl) {
-      readinessGridEl.innerHTML = DATA.roles.map((role, index) => {
+      readinessGridEl.innerHTML = DATA.roles.map((role) => {
         const dynamic = calculateRoleReadiness(role, state);
         const project = projectLookup.get(role.projectId);
         const platforms = role.platformIds.map((id) => platformById.get(id)).filter(Boolean);
-        const searchText = [
-          role.name, dynamic.label, role.whatItDoes, dynamic.reason, role.summary,
-          ...role.searchTitles, ...role.have, ...role.requirements, ...role.develop, ...role.resume, ...role.skipWhen
-        ].join(' ').toLowerCase();
 
-        return `<details class="readiness-card searchable" data-role-id="${escapeHTML(role.id)}" data-search="${escapeHTML(searchText)}" ${index === 0 ? 'open' : ''}>
+        return `<details class="readiness-card" data-role-id="${escapeHTML(role.id)}">
           <summary class="readiness-head">
-            <div>
-              <span class="kicker">Role Path</span>
-              <h3>${escapeHTML(role.name)}</h3>
-              <p>${escapeHTML(role.whatItDoes)}</p>
-            </div>
-            <span class="status-badge ${stateClasses[dynamic.state] || 'status-not-needed'}">${escapeHTML(dynamic.label)}</span>
-            <span class="chevron">›</span>
+            <span><strong>${escapeHTML(role.name)}</strong><span>${escapeHTML(role.whatItDoes)}</span></span>
+            <span class="status-badge ${readinessClasses[dynamic.state]}" data-role-status>${escapeHTML(dynamic.label)}</span>
+            <span class="chevron" aria-hidden="true">›</span>
           </summary>
           <div class="role-launch-body">
             <div class="role-why">
-              <span>Why this status?</span>
-              <p><strong>${escapeHTML(dynamic.label)}:</strong> ${escapeHTML(dynamic.reason)}</p>
+              <p data-role-reason>${escapeHTML(dynamic.reason)}</p>
             </div>
             <div class="role-launch-grid">
               <section><span>Search these titles</span>${listHTML(role.searchTitles)}</section>
@@ -845,7 +827,7 @@
               <span>Best project evidence</span>
               <h4>${escapeHTML(project?.name || 'Use the strongest authentic project')}</h4>
               <p>${escapeHTML(project?.proof || role.summary)}</p>
-              ${project ? `<button type="button" class="inline-action" data-open-project="${escapeHTML(project.id)}">Open project evidence →</button>` : ''}
+              ${project ? `<a class="inline-action" href="#projects/${encodeURIComponent(project.id)}">Open project evidence →</a>` : ''}
             </section>
             ${role.interviewExpectations ? `
               <div class="role-interview-box">
@@ -872,6 +854,15 @@
     renderInternshipChecklist();
   }
 
+  function updateReadiness(state) {
+    for (const role of DATA.roles) {
+      const readiness = calculateRoleReadiness(role, state);
+      const card = selectByData('data-role-id', role.id);
+      updateBadge($('[data-role-status]', card), readiness.label, readinessClasses[readiness.state]);
+      $('[data-role-reason]', card).textContent = readiness.reason;
+    }
+  }
+
   function renderOpportunities() {
     const oppGrid = $('#opportunityGrid');
     if (oppGrid) {
@@ -883,7 +874,7 @@
             <div class="opportunity-head">
               <div>
                 <span class="kicker">Calendar Opportunity</span>
-                <h3>${escapeHTML(item.name)}</h3>
+                <h3 tabindex="-1">${escapeHTML(item.name)}</h3>
               </div>
               <span class="status-badge ${item.featured ? 'status-proven' : 'status-likely'}">${escapeHTML(item.status)}</span>
             </div>
@@ -950,7 +941,7 @@
 
   function renderResourceFilters() {
     const stages = [...new Set(DATA.resources.map((item) => item.stage))];
-    const statuses = ['current', 'still-good', 'needs-review', 'unavailable', 'locked'];
+    const statuses = resourceStatuses;
     const stageSelect = $('#resourceStageFilter');
     const statusSelect = $('#resourceStatusFilter');
     if (!stageSelect || !statusSelect) return;
@@ -963,21 +954,17 @@
     statusSelect.value = statuses.includes(currentStatus) ? currentStatus : 'all';
   }
 
-  function renderResources() {
-    const state = getState();
-    const stage = $('#resourceStageFilter')?.value || 'all';
-    const status = $('#resourceStatusFilter')?.value || 'all';
-
+  function renderResources(state) {
     // Render YouTube Courses
     const ytGrid = $('#youtubeCourseGrid');
     if (ytGrid && DATA.youtubeLearning) {
       ytGrid.innerHTML = DATA.youtubeLearning.map((course) => `
-        <article class="youtube-course-card searchable" data-yt-id="${escapeHTML(course.id)}" data-search="${escapeHTML([course.title, course.creator, course.whySelected].join(' ').toLowerCase())}">
+        <article class="youtube-course-card" data-yt-id="${escapeHTML(course.id)}">
           <div class="yt-badge-row">
             <span class="yt-type-pill">${escapeHTML(course.type)}</span>
             <span class="video-status ${course.status === 'VERIFIED' ? 'verified' : 'unverified'}">${escapeHTML(course.status)}</span>
           </div>
-          <h4>${escapeHTML(course.title)}</h4>
+          <h3 tabindex="-1">${escapeHTML(course.title)}</h3>
           <span class="yt-creator">${escapeHTML(course.creator)} · ${escapeHTML(course.duration)} · ${escapeHTML(course.level)}</span>
           <p class="yt-why">${escapeHTML(course.whySelected)}</p>
           <div class="yt-chapters">
@@ -987,27 +974,21 @@
           ${course.skip ? `<p class="yt-skip"><b>Skip:</b> ${escapeHTML(course.skip)}</p>` : ''}
           <div class="yt-footer">
             <span>Done when: ${escapeHTML(course.doneWhen)}</span>
-            ${externalLink(course.url, 'Watch on YouTube')}
+            ${externalLink(course.url, courseLinkLabel(course.url))}
           </div>
         </article>
       `).join('');
     }
 
-    // Render Official Resources
-    const matching = DATA.resources.filter((resource) => {
-      const verification = state.resourceVerification[resource.id] || resource;
-      return (stage === 'all' || resource.stage === stage) && (status === 'all' || verification.status === status);
-    });
-
     const resGrid = $('#resourceGrid');
     if (resGrid) {
-      resGrid.innerHTML = matching.map((resource) => {
-        const verification = state.resourceVerification[resource.id] || resource;
-        const badgeStatus = verification.status === 'locked' ? 'status-locked' : verification.status === 'current' ? 'status-proven' : 'status-likely';
-        return `<article class="resource-card searchable" id="resource-${escapeHTML(resource.id)}" data-resource-id="${escapeHTML(resource.id)}" data-search="${escapeHTML(resourceSearchText(resource))}">
-          <div class="resource-meta"><span class="resource-id">${escapeHTML(resource.id)} · ${escapeHTML(resource.stage.replaceAll('-', ' '))}</span><span class="status-badge ${badgeStatus}">${escapeHTML(verification.status.replaceAll('-', ' '))}</span></div>
+      resGrid.innerHTML = DATA.resources.map((resource) => {
+        const verification = resourceVerification(resource, state);
+        const badgeStatus = verificationClass(verification.status);
+        return `<article class="resource-card" id="resource-${escapeHTML(resource.id)}" data-resource-id="${escapeHTML(resource.id)}">
+          <div class="resource-meta"><span class="resource-id">${escapeHTML(resource.id)} · ${escapeHTML(resource.stage.replaceAll('-', ' '))}</span><span class="status-badge ${badgeStatus}" data-verification-badge>${escapeHTML(verification.status.replaceAll('-', ' '))}</span></div>
           <div class="resource-type-row">${renderResourceTypeBadge(resource)}</div>
-          <h3>${escapeHTML(resource.name)}</h3><span class="resource-creator">${escapeHTML(resource.creator)} · ${escapeHTML(resource.platform)}</span>
+          <h3 tabindex="-1">${escapeHTML(resource.name)}</h3><span class="resource-creator">${escapeHTML(resource.creator)} · ${escapeHTML(resource.platform)}</span>
           <span class="resource-purpose-label">Purpose</span><strong class="resource-purpose">${escapeHTML(resource.purpose)}</strong>
           <p class="resource-summary">${escapeHTML(resource.summary)}</p>
           <p class="resource-commitment"><strong>${escapeHTML(resource.cost)}</strong> · ${escapeHTML(resource.length)}</p>
@@ -1023,24 +1004,69 @@
               <div class="resource-done"><span>I am done when…</span><p>${escapeHTML(resource.doneWhen)}</p></div>
             </div>
           </details>
-          <div class="resource-footer"><span class="resource-verified">Registry checked ${escapeHTML(resource.lastVerified)}${verification.lastVerified !== resource.lastVerified ? `<small>Your check: ${escapeHTML(verification.lastVerified)}</small>` : ''}</span>${externalLink(resource.url)}</div>
-          <div class="resource-verification"><label>Verification state<select data-resource-status="${escapeHTML(resource.id)}">${['current', 'still-good', 'needs-review', 'unavailable', 'locked'].map((value) => `<option value="${value}" ${verification.status === value ? 'selected' : ''}>${escapeHTML(value.replaceAll('-', ' '))}</option>`).join('')}</select></label></div>
+          <div class="resource-footer"><span class="resource-verified">Registry checked ${escapeHTML(resource.lastVerified)}<small data-personal-verification hidden></small></span>${externalLink(resource.url)}</div>
+          <div class="resource-verification"><label>Verification state<select data-resource-status="${escapeHTML(resource.id)}">${resourceStatuses.map((value) => `<option value="${value}" ${verification.status === value ? 'selected' : ''}>${escapeHTML(value.replaceAll('-', ' '))}</option>`).join('')}</select></label></div>
         </article>`;
       }).join('');
     }
-    const emptyEl = $('#resourceEmpty');
-    if (emptyEl) emptyEl.hidden = matching.length > 0;
+  }
+
+  let revealedResourceId;
+
+  function resourceVerification(resource, state) {
+    const saved = state.resourceVerification[resource.id];
+    return saved && resourceStatuses.includes(saved.status) ? saved : resource;
+  }
+
+  function verificationClass(status) {
+    if (status === 'locked') return 'status-locked';
+    if (status === 'current') return 'status-proven';
+    if (status === 'unavailable') return 'status-missing';
+    return 'status-likely';
+  }
+
+  function updateResources(state, changedResources) {
+    for (const resource of changedResources) {
+      const verification = resourceVerification(resource, state);
+      const card = document.getElementById(`resource-${resource.id}`);
+      updateBadge($('[data-verification-badge]', card), verification.status.replaceAll('-', ' '), verificationClass(verification.status));
+      const personal = $('[data-personal-verification]', card);
+      personal.hidden = !verification.lastVerified || verification.lastVerified === resource.lastVerified;
+      personal.textContent = personal.hidden ? '' : `Your check: ${verification.lastVerified}`;
+      $('select', card).value = verification.status;
+      if (card.contains(document.activeElement)) revealedResourceId = resource.id;
+    }
+    applyResourceFilters(state);
+  }
+
+  function applyResourceFilters(state = getState()) {
+    const stage = $('#resourceStageFilter').value;
+    const status = $('#resourceStatusFilter').value;
+    let visibleCount = 0;
+    for (const resource of DATA.resources) {
+      const verification = resourceVerification(resource, state);
+      const matches = (stage === 'all' || resource.stage === stage) && (status === 'all' || verification.status === status);
+      const card = document.getElementById(`resource-${resource.id}`);
+      card.hidden = !matches && resource.id !== revealedResourceId;
+      if (!card.hidden) visibleCount += 1;
+    }
+    $('#resourceEmpty').hidden = visibleCount > 0;
+  }
+
+  function revealResource(id) {
+    revealedResourceId = id;
+    applyResourceFilters();
+    const card = document.getElementById(`resource-${id}`);
+    $('.resource-guide', card).open = true;
+    return revealTarget($('h3', card));
   }
 
   function renderGlossary() {
-    const glossGrid = $('#glossaryGrid');
-    if (glossGrid) {
-      glossGrid.innerHTML = DATA.glossary.map((item) => `<article class="glossary-card searchable" data-search="${escapeHTML(`${item.term} ${item.definition}`.toLowerCase())}"><h3>${escapeHTML(item.term)}</h3><p>${escapeHTML(item.definition)}</p></article>`).join('');
-    }
+    $('#glossaryGrid').innerHTML = DATA.glossary.map((item) => `<article class="glossary-card" data-glossary-term="${escapeHTML(item.term)}">
+      <h3 tabindex="-1">${escapeHTML(item.term)}</h3><p>${escapeHTML(item.definition)}</p>
+    </article>`).join('');
   }
 
-  const educationSearchText = (...values) => JSON.stringify(values).toLowerCase();
-  const educationSearchAttrs = (...values) => `class="education-card searchable" data-search="${escapeHTML(educationSearchText(...values))}"`;
   const slug = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
   function renderMetadataRows(rows) {
@@ -1062,7 +1088,7 @@
       ['Effective date', policy.effectiveDate], ['Closure date', policy.closureDate], ['Applies to', policy.appliesTo],
       ['Change risk', policy.changeRisk], ['Last verified', policy.lastVerified], ['Next revalidation', policy.nextRevalidationPoint], ['Superseded by', policy.supersededBy]
     ];
-    return `<details class="policy-card searchable ${isSuperseded ? 'policy-card-superseded' : ''}" data-search="${escapeHTML(educationSearchText(policy))}">
+    return `<details class="policy-card ${isSuperseded ? 'policy-card-superseded' : ''}">
       <summary><div><span class="kicker">Rule / policy</span><h4>${escapeHTML(policy.rule)}</h4>${policy.value ? `<strong class="policy-value">${escapeHTML(policy.value)}</strong>` : ''}</div><div class="policy-badges"><span class="policy-badge verification-${slug(verification)}">Verification: ${escapeHTML(verification)}</span><span class="policy-badge state-${slug(policy.policyState)}">Policy: ${escapeHTML(policy.policyState)}</span></div><span class="chevron">›</span></summary>
       <div class="policy-body"><div class="policy-copy"><span>Currently confirmed</span><p>${escapeHTML(policy.confirmed)}</p></div><div class="policy-copy"><span>Strategic implication</span><p>${escapeHTML(policy.implication)}</p></div>${policy.freshnessRule ? `<div class="policy-alert"><strong>Freshness rule</strong><p>${escapeHTML(policy.freshnessRule)}</p></div>` : ''}${renderMetadataRows(rows)}<div class="policy-source">${externalLink(policy.source.url, policy.source.name)}</div></div>
     </details>`;
@@ -1076,7 +1102,7 @@
       ['Campus-specific route availability', program.campusRouteAvailability], ['Admission language', program.admissionLanguage], ['PGWP language', program.pgwpLanguage],
       ['Current cost', program.currentCost], ['Funding / scholarships', program.funding], ['Co-op / internship', program.experience], ['Research', program.research], ['Last verified', program.lastVerified]
     ];
-    return `<details class="program-card searchable" data-search="${escapeHTML(educationSearchText(program))}">
+    return `<details class="program-card">
       <summary><div><span class="kicker">${escapeHTML(program.classification)}</span><h3>${escapeHTML(program.university)}</h3><p>${escapeHTML(program.programName)} · ${escapeHTML(program.credential)}</p></div><div class="program-assessment"><span><small>Profile fit</small><strong>${escapeHTML(program.competitiveness)}</strong></span><span><small>Assessment confidence</small><strong>${escapeHTML(program.assessmentConfidence)}</strong></span></div><span class="chevron">›</span></summary>
       <div class="program-body"><div class="program-route-strip">${program.routes.map((route) => `<span>${escapeHTML(route)}</span>`).join('')}</div>${renderMetadataRows(identityRows)}<div class="program-columns"><div><span class="kicker">Evidence basis</span><p>${escapeHTML(program.evidenceBasis)}</p><span class="kicker">Key verification needed</span>${listHTML(program.keyVerification)}</div><div><span class="kicker">Major advantages</span>${listHTML(program.advantages)}<span class="kicker">Major trade-offs</span>${listHTML(program.tradeoffs)}</div></div><div class="policy-source">${externalLink(program.source.url, program.source.name)}</div></div>
     </details>`;
@@ -1102,46 +1128,46 @@
 
     const panels = [
       ['overview', `
-        <article ${educationSearchAttrs(horizon)}><div class="education-horizon"><div><span class="kicker">${escapeHTML(horizon.label)}</span><strong>${escapeHTML(horizon.value)}</strong></div><span class="policy-badge verification-reverify-soon">${escapeHTML(horizon.status)}</span></div><p>${escapeHTML(horizon.reference)}</p><p><strong>${escapeHTML(horizon.objective)}</strong></p><div class="strategy-guardrail">${escapeHTML(horizon.meaning)}</div></article>
-        <div class="education-map-grid">${education.hierarchy.map((map) => `<article ${educationSearchAttrs(map)}><span class="kicker">${escapeHTML(map.label)} · ${escapeHTML(map.role)}</span><h3>${escapeHTML(map.name)}</h3><p>${escapeHTML(map.summary)}</p></article>`).join('')}</div>
-        <article ${educationSearchAttrs(education.valueBuilding)}><span class="kicker">Career independence</span><h3>${escapeHTML(education.valueBuilding.title)}</h3><p>${escapeHTML(education.valueBuilding.summary)}</p><div class="tag-list">${education.valueBuilding.assets.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div><div class="strategy-guardrail"><strong>${escapeHTML(education.valueBuilding.experienceLabel)}</strong> ${escapeHTML(education.valueBuilding.guardrail)}</div></article>
+        <article class="education-card"><div class="education-horizon"><div><span class="kicker">${escapeHTML(horizon.label)}</span><strong>${escapeHTML(horizon.value)}</strong></div><span class="policy-badge verification-reverify-soon">${escapeHTML(horizon.status)}</span></div><p>${escapeHTML(horizon.reference)}</p><p><strong>${escapeHTML(horizon.objective)}</strong></p><div class="strategy-guardrail">${escapeHTML(horizon.meaning)}</div></article>
+        <div class="education-map-grid">${education.hierarchy.map((map) => `<article class="education-card"><span class="kicker">${escapeHTML(map.label)} · ${escapeHTML(map.role)}</span><h3>${escapeHTML(map.name)}</h3><p>${escapeHTML(map.summary)}</p></article>`).join('')}</div>
+        <article class="education-card"><span class="kicker">Career independence</span><h3>${escapeHTML(education.valueBuilding.title)}</h3><p>${escapeHTML(education.valueBuilding.summary)}</p><div class="tag-list">${education.valueBuilding.assets.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div><div class="strategy-guardrail"><strong>${escapeHTML(education.valueBuilding.experienceLabel)}</strong> ${escapeHTML(education.valueBuilding.guardrail)}</div></article>
         <div class="education-section-intro"><div><span class="kicker">Current verified snapshot · ${escapeHTML(snapshot.referenceDate)}</span><h3>Canada policy reference</h3><p>${escapeHTML(snapshot.note)}</p></div><span class="policy-badge verification-current">${escapeHTML(snapshot.status)}</span></div>
         <div class="policy-grid">${snapshot.records.map(renderPolicyCard).join('')}</div>`],
       ['education-strategy', `
-        <div class="education-two-column"><article ${educationSearchAttrs(education.metadata)}><span class="kicker">Current education position</span><h3>Bachelor’s progression</h3>${renderMetadataRows(education.metadata)}</article><article ${educationSearchAttrs(education.mastersDecision)}><span class="kicker">Master’s decision system</span><h3>Compare the exact route, not a university label</h3><p>${escapeHTML(education.mastersDecision.principle)}</p><div class="tag-list">${education.mastersDecision.routes.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div>${listHTML(education.mastersDecision.guardrails)}</article></div>
-        <article ${educationSearchAttrs(education.mastersDecision.preparation)}><span class="kicker">Admission preparation</span><h3>Evidence to refresh when applications become real</h3>${listHTML(education.mastersDecision.preparation)}</article>
-        <article ${educationSearchAttrs(education.valueBuilding.experienceFlow)}><span class="kicker">Professional experience · ${escapeHTML(education.valueBuilding.experienceLabel)}</span><h3>Arrive with professional value when opportunity allows</h3><div class="experience-flow">${education.valueBuilding.experienceFlow.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div><p>${escapeHTML(education.valueBuilding.guardrail)}</p></article>`],
+        <div class="education-two-column"><article class="education-card"><span class="kicker">Current education position</span><h3>Bachelor’s progression</h3>${renderMetadataRows(education.metadata)}</article><article class="education-card"><span class="kicker">Master’s decision system</span><h3>Compare the exact route, not a university label</h3><p>${escapeHTML(education.mastersDecision.principle)}</p><div class="tag-list">${education.mastersDecision.routes.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div>${listHTML(education.mastersDecision.guardrails)}</article></div>
+        <article class="education-card"><span class="kicker">Admission preparation</span><h3>Evidence to refresh when applications become real</h3>${listHTML(education.mastersDecision.preparation)}</article>
+        <article class="education-card"><span class="kicker">Professional experience · ${escapeHTML(education.valueBuilding.experienceLabel)}</span><h3>Arrive with professional value when opportunity allows</h3><div class="experience-flow">${education.valueBuilding.experienceFlow.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div><p>${escapeHTML(education.valueBuilding.guardrail)}</p></article>`],
       ['university-options', `
         <div class="education-section-intro"><div><span class="kicker">${escapeHTML(education.universitySnapshot.title)}</span><h3>Five strategic comparisons</h3><p>${escapeHTML(education.universitySnapshot.rule)}</p></div><span class="policy-badge verification-reverify-soon">${escapeHTML(education.universitySnapshot.status)}</span></div>
         <div class="program-grid">${education.universitySnapshot.programs.map(renderProgramCard).join('')}</div>`],
       ['lakehead-alternatives', `
-        <article ${educationSearchAttrs(education.lakehead)}><span class="kicker">${escapeHTML(education.lakehead.classification)}</span><h3>Lakehead is a legitimate option—not an automatic recommendation</h3><p>${escapeHTML(education.lakehead.decisionRule)}</p><div class="route-comparison">${education.lakehead.routeTradeoff.map((route) => `<div><strong>${escapeHTML(route.route)}</strong><span>${escapeHTML(route.value)}</span><p>${escapeHTML(route.constraint)}</p></div>`).join('')}</div></article>
-        <div class="campus-grid">${education.lakehead.campuses.map((campus) => `<article ${educationSearchAttrs(campus)}><div class="campus-head"><div><span class="kicker">Campus-specific identity</span><h3>${escapeHTML(campus.campus)}</h3></div><span class="policy-badge ${campus.dliCampusMatch === 'VERIFIED' ? 'verification-current' : 'verification-unknown'}">DLI match: ${escapeHTML(campus.dliCampusMatch)}</span></div>${renderMetadataRows([['Program availability', campus.programAvailability], ['DLI number', campus.dliNumber], ['PGWP / immigration by campus', campus.pgwpByCampus], ['Campus route availability', campus.campusRouteAvailability], ['Last verified', campus.lastVerified]])}${campus.action ? `<div class="policy-alert"><strong>Action before reliance</strong><p>${escapeHTML(campus.action)}</p></div>` : ''}<div class="policy-source">${externalLink(campus.officialCampusSource.url, campus.officialCampusSource.name)}</div></article>`).join('')}</div>
-        <article ${educationSearchAttrs(lakeheadProgram.tradeoffs)}><span class="kicker">Decision dimensions remain separate</span><h3>Career value ≠ immigration value ≠ personal / life value</h3><div class="tag-list">${education.valueDimensions.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div><p>No single combined score decides Lakehead or any alternative.</p></article>`],
+        <article class="education-card"><span class="kicker">${escapeHTML(education.lakehead.classification)}</span><h3>Lakehead is a legitimate option—not an automatic recommendation</h3><p>${escapeHTML(education.lakehead.decisionRule)}</p><div class="route-comparison">${education.lakehead.routeTradeoff.map((route) => `<div><strong>${escapeHTML(route.route)}</strong><span>${escapeHTML(route.value)}</span><p>${escapeHTML(route.constraint)}</p></div>`).join('')}</div></article>
+        <div class="campus-grid">${education.lakehead.campuses.map((campus) => `<article class="education-card"><div class="campus-head"><div><span class="kicker">Campus-specific identity</span><h3>${escapeHTML(campus.campus)}</h3></div><span class="policy-badge ${campus.dliCampusMatch === 'VERIFIED' ? 'verification-current' : 'verification-unknown'}">DLI match: ${escapeHTML(campus.dliCampusMatch)}</span></div>${renderMetadataRows([['Program availability', campus.programAvailability], ['DLI number', campus.dliNumber], ['PGWP / immigration by campus', campus.pgwpByCampus], ['Campus route availability', campus.campusRouteAvailability], ['Last verified', campus.lastVerified]])}${campus.action ? `<div class="policy-alert"><strong>Action before reliance</strong><p>${escapeHTML(campus.action)}</p></div>` : ''}<div class="policy-source">${externalLink(campus.officialCampusSource.url, campus.officialCampusSource.name)}</div></article>`).join('')}</div>
+        <article class="education-card"><span class="kicker">Decision dimensions remain separate</span><h3>Career value ≠ immigration value ≠ personal / life value</h3><div class="tag-list">${education.valueDimensions.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div><p>No single combined score decides Lakehead or any alternative.</p></article>`],
       ['location-analysis', `
-        <article ${educationSearchAttrs(education.locationAnalysis)}><span class="kicker">Location decision · separate from university decision</span><h3>${escapeHTML(education.locationAnalysis.location)} ≠ ${escapeHTML(education.locationAnalysis.distinctFrom)}</h3><div class="status-callout"><strong>${escapeHTML(education.locationAnalysis.status)}</strong><p>${escapeHTML(education.locationAnalysis.question)}</p></div><div class="research-grid">${education.locationAnalysis.research.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div></article>`],
+        <article class="education-card"><span class="kicker">Location decision · separate from university decision</span><h3>${escapeHTML(education.locationAnalysis.location)} ≠ ${escapeHTML(education.locationAnalysis.distinctFrom)}</h3><div class="status-callout"><strong>${escapeHTML(education.locationAnalysis.status)}</strong><p>${escapeHTML(education.locationAnalysis.question)}</p></div><div class="research-grid">${education.locationAnalysis.research.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div></article>`],
       ['language-strategy', `
-        <div class="language-grid">${education.languageStrategy.map((item) => `<article ${educationSearchAttrs(item)}><span class="kicker">Language purpose</span><h3>${escapeHTML(item.purpose)}</h3><p>${escapeHTML(item.summary)}</p>${listHTML(item.questions)}<div class="strategy-guardrail"><strong>Revalidate</strong> ${escapeHTML(item.revalidate)}</div></article>`).join('')}</div>
-        <article ${educationSearchAttrs(education.languageStrategy)}><span class="kicker">Permanent distinction</span><h3>Admission language ≠ PGWP language ≠ immigration language</h3><p>ATLAS does not create one generic IELTS node. The accepted test, score, validity, timing and purpose must be verified independently.</p></article>`],
+        <div class="language-grid">${education.languageStrategy.map((item) => `<article class="education-card"><span class="kicker">Language purpose</span><h3>${escapeHTML(item.purpose)}</h3><p>${escapeHTML(item.summary)}</p>${listHTML(item.questions)}<div class="strategy-guardrail"><strong>Revalidate</strong> ${escapeHTML(item.revalidate)}</div></article>`).join('')}</div>
+        <article class="education-card"><span class="kicker">Permanent distinction</span><h3>Admission language ≠ PGWP language ≠ immigration language</h3><p>ATLAS does not create one generic IELTS node. The accepted test, score, validity, timing and purpose must be verified independently.</p></article>`],
       ['financial-planning', `
-        <div class="education-two-column"><article ${educationSearchAttrs(education.finances.published)}><span class="kicker">${escapeHTML(education.finances.published.status)}</span><h3>${escapeHTML(education.finances.published.title)}</h3>${listHTML(education.finances.published.items)}<p class="small-note">Last verified ${escapeHTML(education.finances.published.lastVerified)}</p></article><article ${educationSearchAttrs(education.finances.future)}><span class="kicker">${escapeHTML(education.finances.future.status)}</span><h3>${escapeHTML(education.finances.future.title)}</h3>${listHTML(education.finances.future.items)}</article></div>
-        <article ${educationSearchAttrs(education.finances.studyPermitReference)}><span class="kicker">Study-permit reference ≠ living-cost estimate</span><h3>Keep financial meanings separate</h3><p>${escapeHTML(education.finances.studyPermitReference)}</p><div class="strategy-guardrail">${escapeHTML(education.finances.guardrail)}</div></article>
-        <article ${educationSearchAttrs(education.finances.horizon)}><span class="kicker">${escapeHTML(education.finances.horizon.title)}</span><h3>${escapeHTML(education.finances.horizon.status)}</h3><p>${escapeHTML(education.finances.horizon.trigger)}</p><div class="tag-list">${education.finances.resourceClasses.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div></article>`],
+        <div class="education-two-column"><article class="education-card"><span class="kicker">${escapeHTML(education.finances.published.status)}</span><h3>${escapeHTML(education.finances.published.title)}</h3>${listHTML(education.finances.published.items)}<p class="small-note">Last verified ${escapeHTML(education.finances.published.lastVerified)}</p></article><article class="education-card"><span class="kicker">${escapeHTML(education.finances.future.status)}</span><h3>${escapeHTML(education.finances.future.title)}</h3>${listHTML(education.finances.future.items)}</article></div>
+        <article class="education-card"><span class="kicker">Study-permit reference ≠ living-cost estimate</span><h3>Keep financial meanings separate</h3><p>${escapeHTML(education.finances.studyPermitReference)}</p><div class="strategy-guardrail">${escapeHTML(education.finances.guardrail)}</div></article>
+        <article class="education-card"><span class="kicker">${escapeHTML(education.finances.horizon.title)}</span><h3>${escapeHTML(education.finances.horizon.status)}</h3><p>${escapeHTML(education.finances.horizon.trigger)}</p><div class="tag-list">${education.finances.resourceClasses.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div></article>`],
       ['canada-requirements', `
-        <article ${educationSearchAttrs(education.canadaRequirements)}><span class="kicker">Exact-program rule</span><h3>Eligibility is never inherited from a university name</h3><p>${escapeHTML(education.canadaRequirements.programIdentityRule)}</p><div class="strategy-guardrail"><strong>PGWP revalidation required</strong> before accepting an offer or paying a substantial deposit.</div></article>
-        <article ${educationSearchAttrs(education.canadaRequirements.beforeCommitment)}><span class="kicker">Decision checklist</span><h3>Before committing significant money</h3>${listHTML(education.canadaRequirements.beforeCommitment)}</article>
-        <div class="education-two-column"><article ${educationSearchAttrs(education.canadaRequirements.workEvidenceRule)}><span class="kicker">Work evidence</span><h3>Two different questions</h3><p><strong>Career:</strong> does this make me a stronger engineer?</p><p><strong>Immigration:</strong> does this exact experience qualify under the pathway being evaluated?</p><p>${escapeHTML(education.canadaRequirements.workEvidenceRule)}</p></article><article ${educationSearchAttrs(education.canadaRequirements.remoteWorkRule)}><span class="kicker">Remote work</span><h3>Career opportunity, not assumed funding</h3><p>${escapeHTML(education.canadaRequirements.remoteWorkRule)}</p></article></div>`],
+        <article class="education-card"><span class="kicker">Exact-program rule</span><h3>Eligibility is never inherited from a university name</h3><p>${escapeHTML(education.canadaRequirements.programIdentityRule)}</p><div class="strategy-guardrail"><strong>PGWP revalidation required</strong> before accepting an offer or paying a substantial deposit.</div></article>
+        <article class="education-card"><span class="kicker">Decision checklist</span><h3>Before committing significant money</h3>${listHTML(education.canadaRequirements.beforeCommitment)}</article>
+        <div class="education-two-column"><article class="education-card"><span class="kicker">Work evidence</span><h3>Two different questions</h3><p><strong>Career:</strong> does this make me a stronger engineer?</p><p><strong>Immigration:</strong> does this exact experience qualify under the pathway being evaluated?</p><p>${escapeHTML(education.canadaRequirements.workEvidenceRule)}</p></article><article class="education-card"><span class="kicker">Remote work</span><h3>Career opportunity, not assumed funding</h3><p>${escapeHTML(education.canadaRequirements.remoteWorkRule)}</p></article></div>`],
       ['immigration-reference', `
-        <article ${educationSearchAttrs(education.immigrationReference)}><div class="education-section-intro"><div><span class="kicker">Strategic reference</span><h3>${escapeHTML(education.immigrationReference.title)}</h3></div><span class="policy-badge verification-reverify-soon">${escapeHTML(education.immigrationReference.status)}</span></div><p>${escapeHTML(education.immigrationReference.summary)}</p><div class="tag-list">${education.immigrationReference.categories.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div><div class="strategy-guardrail">${escapeHTML(education.immigrationReference.guardrail)}</div></article>
-        <article ${educationSearchAttrs(education.immigrationReference.cardQuestions)}><span class="kicker">Reference-card scope</span><h3>Research only what is decision-relevant</h3>${listHTML(education.immigrationReference.cardQuestions)}</article>
+        <article class="education-card"><div class="education-section-intro"><div><span class="kicker">Strategic reference</span><h3>${escapeHTML(education.immigrationReference.title)}</h3></div><span class="policy-badge verification-reverify-soon">${escapeHTML(education.immigrationReference.status)}</span></div><p>${escapeHTML(education.immigrationReference.summary)}</p><div class="tag-list">${education.immigrationReference.categories.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div><div class="strategy-guardrail">${escapeHTML(education.immigrationReference.guardrail)}</div></article>
+        <article class="education-card"><span class="kicker">Reference-card scope</span><h3>Research only what is decision-relevant</h3>${listHTML(education.immigrationReference.cardQuestions)}</article>
         <div class="policy-grid">${snapshot.records.filter((item) => item.id === 'oinp-masters-graduate').map(renderPolicyCard).join('')}</div>`],
       ['decision-checkpoints', `
-        <article ${educationSearchAttrs(education.checkpoints)}><span class="kicker">Decision triggers · never deadlines</span><h3>Revalidate when the decision becomes actionable</h3><p>No countdown pressure and no overdue engineering states.</p></article>
-        <div class="checkpoint-timeline">${education.checkpoints.map((item, index) => `<details class="checkpoint-trigger searchable" data-search="${escapeHTML(educationSearchText(item))}" ${index === 0 ? 'open' : ''}><summary><span>${String(index + 1).padStart(2, '0')}</span><div><h4>${escapeHTML(item.name)}</h4><p>${escapeHTML(item.trigger)}</p></div><span class="chevron">›</span></summary><div>${listHTML(item.verify)}</div></details>`).join('')}</div>`],
+        <article class="education-card"><span class="kicker">Decision triggers · never deadlines</span><h3>Revalidate when the decision becomes actionable</h3><p>No countdown pressure and no overdue engineering states.</p></article>
+        <div class="checkpoint-timeline">${education.checkpoints.map((item, index) => `<details class="checkpoint-trigger" ${index === 0 ? 'open' : ''}><summary><span>${String(index + 1).padStart(2, '0')}</span><div><h4>${escapeHTML(item.name)}</h4><p>${escapeHTML(item.trigger)}</p></div><span class="chevron">›</span></summary><div>${listHTML(item.verify)}</div></details>`).join('')}</div>`],
       ['canada-trajectory', `
-        <article ${educationSearchAttrs(education.planningHorizon)}><span class="kicker">Canada trajectory · separate from Career trajectory</span><h3>${escapeHTML(horizon.value)} · ${escapeHTML(horizon.status)}</h3><p>${escapeHTML(horizon.meaning)}</p></article>
-        <div class="canada-trajectory">${education.canadaTrajectory.map((item) => `<article class="canada-trajectory-item searchable" data-search="${escapeHTML(educationSearchText(item))}"><span>${escapeHTML(item.period)}</span><div><h3>${escapeHTML(item.title)}</h3><p>${escapeHTML(item.detail)}</p></div></article>`).join('')}</div>
-        <article ${educationSearchAttrs(education.globalGuardrail)}><span class="kicker">Global guardrail</span><h3>Canada remains optional</h3><p>${escapeHTML(education.globalGuardrail)}</p></article>`]
+        <article class="education-card"><span class="kicker">Canada trajectory · separate from Career trajectory</span><h3>${escapeHTML(horizon.value)} · ${escapeHTML(horizon.status)}</h3><p>${escapeHTML(horizon.meaning)}</p></article>
+        <div class="canada-trajectory">${education.canadaTrajectory.map((item) => `<article class="canada-trajectory-item"><span>${escapeHTML(item.period)}</span><div><h3>${escapeHTML(item.title)}</h3><p>${escapeHTML(item.detail)}</p></div></article>`).join('')}</div>
+        <article class="education-card"><span class="kicker">Global guardrail</span><h3>Canada remains optional</h3><p>${escapeHTML(education.globalGuardrail)}</p></article>`]
     ];
 
     const layoutEl = $('#educationLayout');
@@ -1150,7 +1176,7 @@
     }
   }
 
-  function showEducationPanel(id, focus = false) {
+  function showEducationPanel(id) {
     if (!DATA.education.sectionNav.some(([sectionId]) => sectionId === id)) return;
     activeEducationSection = id;
     $$('[data-education-tab]').forEach((button) => {
@@ -1163,7 +1189,6 @@
       mobileSelectEl.value = id;
     }
     $$('[data-education-panel]').forEach((panel) => { panel.hidden = panel.dataset.educationPanel !== id; });
-    if (focus) $(`#education-panel-${id}`)?.focus({ preventScroll: true });
   }
 
   function renderTrajectory() {
@@ -1174,8 +1199,7 @@
     }
   }
 
-  function buildCheckpointSnapshot() {
-    const state = getState();
+  function buildCheckpointSnapshot(state) {
     const overview = getOverviewModel(state);
     const allRequired = [...DATA.phases.flatMap((phase) => phase.nodes), ...DATA.sweDepth.nodes]
       .filter((item) => ![DATA.status.OPTIONAL, DATA.status.NOT_NEEDED, DATA.status.LOCKED].includes(state.progress[item.id]?.evidenceStatus || item.evidenceStatus));
@@ -1187,9 +1211,9 @@
     });
     return {
       stage: DATA.currentPosition.stage,
-      missionId: overview.mission.id,
-      mission: overview.mission.name,
-      missionFirstAction: '',
+      missionId: overview.mission?.id || null,
+      mission: overview.mission?.name || 'No unresolved tasks queued',
+      missionFirstAction: overview.mission ? getLearningResources(overview.mission, state).recommended?.title || '' : '',
       evidenceCount: state.evidence.length,
       evidence: provenEvidence.map((item) => item.label),
       remaining: remaining.slice(0, 6).map((item) => item.name),
@@ -1197,21 +1221,25 @@
       verifyOnce: overview.verifyOnce.map((item) => ({ id: item.id, name: item.name })),
       project: overview.project.name,
       ignore: DATA.currentPosition.ignoreNow,
-      opportunities: DATA.roles.filter((role) => ['apply-now', 'apply-selectively'].includes(role.state)).map((role) => role.name),
+      opportunities: DATA.roles.filter((role) => ['apply-now', 'apply-selectively'].includes(calculateRoleReadiness(role, state).state)).map((role) => role.name),
       staleResources: staleResources.slice(0, 6).map((resource) => resource.name)
     };
   }
 
-  function renderCheckpoint(record = false) {
-    const state = getState();
-    const snapshot = buildCheckpointSnapshot();
-    const lastRun = record ? STORE.recordCheckpoint(snapshot).createdAt : state.careerCheckpoint.lastRunAt;
+  function renderCheckpoint(record = false, state = getState()) {
+    const snapshot = buildCheckpointSnapshot(state);
+    if (record) {
+      STORE.recordCheckpoint(snapshot);
+      toast('Career GPS snapshot saved locally.');
+      return;
+    }
+    const lastRun = state.careerCheckpoint.lastRunAt;
     const cards = [
       ['Where am I now?', snapshot.stage, 'Software Engineering Core unlocks serious ML. Professional SWE Depth continues in parallel.'],
-      ['Current Focus / Mission', snapshot.mission, `<p>${escapeHTML(snapshot.missionFirstAction)}</p><button type="button" class="inline-action" data-open-node="${escapeHTML(snapshot.missionId)}">Open task recipe &amp; lab →</button>`],
-      ['What follows?', `${snapshot.next.length} queued task${snapshot.next.length === 1 ? '' : 's'}`, snapshot.next.length ? `<ol class="checkpoint-actions">${snapshot.next.map((item) => `<li><button type="button" data-open-node="${escapeHTML(item.id)}"><strong>${escapeHTML(item.name)}</strong><span>${escapeHTML('')}</span></button></li>`).join('')}</ol>` : '<p>Complete current capabilities to advance to subsequent phases.</p>'],
-      ['What should I verify once?', `${snapshot.verifyOnce.length} claim${snapshot.verifyOnce.length === 1 ? '' : 's'}`, snapshot.verifyOnce.length ? `<ul>${snapshot.verifyOnce.map((item) => `<li><button type="button" class="inline-action" data-open-node="${escapeHTML(item.id)}">${escapeHTML(item.name)}</button></li>`).join('')}</ul>` : '<p>No current verify-once items are waiting.</p>'],
-      ['Personal notes &amp; state', `${snapshot.evidenceCount} saved evidence / notes`, 'Capability self-assessments and notes stay stored locally.'],
+      ['Current Focus / Mission', snapshot.mission, snapshot.missionId ? `${snapshot.missionFirstAction ? `<p>Start with ${escapeHTML(snapshot.missionFirstAction)}.</p>` : ''}<a class="inline-action" href="${taskLink(snapshot.missionId)}">Open learning workspace →</a>` : ''],
+      ['What follows?', `${snapshot.next.length} queued task${snapshot.next.length === 1 ? '' : 's'}`, snapshot.next.length ? `<ol class="checkpoint-actions">${snapshot.next.map((item) => `<li><a class="inline-action" href="${taskLink(item.id)}">${escapeHTML(item.name)}</a></li>`).join('')}</ol>` : '<p>Complete current capabilities to advance to subsequent phases.</p>'],
+      ['What should I verify once?', `${snapshot.verifyOnce.length} claim${snapshot.verifyOnce.length === 1 ? '' : 's'}`, snapshot.verifyOnce.length ? `<ul>${snapshot.verifyOnce.map((item) => `<li><a class="inline-action" href="${taskLink(item.id)}">${escapeHTML(item.name)}</a></li>`).join('')}</ul>` : '<p>No current verify-once items are waiting.</p>'],
+      ['Personal notes and state', `${snapshot.evidenceCount} saved evidence / notes`, 'Capability self-assessments and notes stay stored locally.'],
       ['Which project carries the proof?', snapshot.project, '<p>Upgrade the best authentic existing application. Open Project 1 from Projects ladder.</p>'],
       ['What can I ignore?', 'Not needed now', escapeHTML(snapshot.ignore)],
       ['Which opportunities are relevant?', 'Apply where capabilities overlap', `<ul>${snapshot.opportunities.map((item) => `<li>${escapeHTML(item)}</li>`).join('')}</ul>`],
@@ -1221,388 +1249,192 @@
 
     const cardsHTML = cards.map(([question, title, body]) => `<article class="checkpoint-card"><span class="question">${escapeHTML(question)}</span><h3>${escapeHTML(title)}</h3>${String(body).startsWith('<') ? body : `<p>${body}</p>`}</article>`).join('');
 
-    const chkGrid = $('#checkpointGrid');
-    if (chkGrid) chkGrid.innerHTML = cardsHTML;
-
-    const chkGridPanel = $('#checkpointGridPanel');
-    if (chkGridPanel) chkGridPanel.innerHTML = cardsHTML;
-
-    if (record) toast('Career GPS snapshot saved locally.');
+    $('#checkpointGrid').innerHTML = cardsHTML;
   }
 
-  function renderProgress() {
-    const state = getState();
-    const progress = baselineCapabilityCoverage();
-    const textEl = $('#overallProgressText');
-    if (textEl) textEl.textContent = `${progress}%`;
-    const fillEl = $('#overallProgressFill');
-    if (fillEl) fillEl.style.width = `${progress}%`;
-    const detailEl = $('#overallProgressDetail');
-    if (detailEl) detailEl.textContent = 'Approved baseline; not a task-completion score';
-    const actionEl = $('#actionProgressText');
-    if (actionEl) actionEl.textContent = String(actionCompletionCount(state));
+  function renderProgress(state) {
+    $('#overallProgressText').textContent = `${baselineCapabilityCoverage()}%`;
+    $('#actionProgressText').textContent = String(actionCompletionCount(state));
   }
 
   function renderMapStatusFilter() {
-    const select = $('#mapStatusFilter');
-    if (!select) return;
-    const current = select.value || 'all';
-    select.innerHTML = `<option value="all">All evidence states</option>${Object.entries(DATA.statusLabels).map(([value, label]) => `<option value="${value}">${escapeHTML(label)}</option>`).join('')}`;
-    select.value = Object.prototype.hasOwnProperty.call(DATA.statusLabels, current) ? current : 'all';
-  }
-
-  /* =========================================================================
-     CONTEXT-PRESERVING RENDER (NO ACCIDENTAL COLLAPSE OF OPEN CARDS)
-     ========================================================================= */
-
-  function renderAll() {
-    if (isRendering) return;
-    isRendering = true;
-
-    // 1. Capture Open UI State
-    const openPhaseIds = new Set($$('#phaseList details[data-phase-id][open]').map((el) => el.dataset.phaseId));
-    const openNodeIds = new Set($$('details[data-node-id][open]').map((el) => el.dataset.nodeId));
-    const openProjectIds = new Set($$('details[data-project-id][open]').map((el) => el.dataset.projectId));
-    const openRoleIds = new Set($$('details[data-role-id][open]').map((el) => el.dataset.roleId));
-    const openResourceGuideIds = new Set($$('.resource-card details.resource-guide[open]').map((el) => el.closest('.resource-card')?.dataset?.resourceId).filter(Boolean));
-    const isSweTrackOpen = $('#sweDepthTrack details.parallel-track-details')?.open;
-    const isBaselineAuditOpen = $('#baselineAudit')?.closest('details')?.open;
-
-    // 2. Render Components
-    renderHome();
-    renderArchitecture();
-    renderPhases();
-    renderProjects();
-    renderReadiness();
-    renderProof();
-    renderResources();
-    renderGlossary();
-    renderEducation();
-    renderTrajectory();
-    renderCheckpoint(false);
-    renderProgress();
-    applyMapFilter();
-
-    // 3. Restore Open UI State
-    if (openPhaseIds.size > 0) {
-      $$('#phaseList details[data-phase-id]').forEach((el) => {
-        el.open = openPhaseIds.has(el.dataset.phaseId);
-      });
-    }
-    if (openNodeIds.size > 0) {
-      $$('details[data-node-id]').forEach((el) => {
-        if (openNodeIds.has(el.dataset.nodeId)) {
-          el.open = true;
-          el.closest('.phase-card')?.setAttribute('open', '');
-          el.closest('.parallel-track-details')?.setAttribute('open', '');
-        }
-      });
-    }
-    if (openProjectIds.size > 0) {
-      $$('details[data-project-id]').forEach((el) => {
-        el.open = openProjectIds.has(el.dataset.projectId);
-      });
-    }
-    if (openRoleIds.size > 0) {
-      $$('details[data-role-id]').forEach((el) => {
-        el.open = openRoleIds.has(el.dataset.roleId);
-      });
-    }
-    if (openResourceGuideIds.size > 0) {
-      $$('.resource-card').forEach((card) => {
-        if (openResourceGuideIds.has(card.dataset.resourceId)) {
-          const guide = card.querySelector('details.resource-guide');
-          if (guide) guide.open = true;
-        }
-      });
-    }
-    if (isSweTrackOpen) {
-      const sweDetails = $('#sweDepthTrack details.parallel-track-details');
-      if (sweDetails) sweDetails.open = true;
-    }
-    if (isBaselineAuditOpen !== undefined) {
-      const auditDetails = $('#baselineAudit')?.closest('details');
-      if (auditDetails) auditDetails.open = isBaselineAuditOpen;
-    }
-
-    isRendering = false;
+    $('#mapStatusFilter').innerHTML = `<option value="all">All capabilities</option>
+      <option value="suggested">Suggested next</option>
+      <option value="in-progress">In progress</option>
+      <option value="completed">Completed</option>
+      <option value="not-started">Not started</option>
+      <optgroup label="Evidence status">
+        ${Object.entries(DATA.statusLabels).map(([value, label]) => `<option value="evidence:${value}">${escapeHTML(label)}</option>`).join('')}
+      </optgroup>`;
   }
 
   function applyMapFilter() {
-    const filter = $('#mapStatusFilter')?.value || 'all';
-    $$('.node-card').forEach((card) => {
-      card.hidden = filter !== 'all' && card.dataset.evidenceStatus !== filter;
-    });
+    const filter = $('#mapStatusFilter').value;
+    let matches = 0;
+    for (const group of $$('.phase-card')) {
+      let visible = 0;
+      for (const row of $$('[data-node-id]', group)) {
+        const { progress, suggested, evidenceStatus } = row.dataset;
+        row.hidden = !['all', progress, `evidence:${evidenceStatus}`].includes(filter)
+          && !(filter === 'suggested' && suggested === 'true');
+        if (!row.hidden) visible += 1;
+      }
+      group.hidden = !visible;
+      matches += visible;
+    }
+    $('#mapEmpty').hidden = Boolean(matches);
   }
 
-  /* =========================================================================
-     CROSS-VIEW NAVIGATION HELPERS (REVEAL, SCROLL, FOCUS)
-     ========================================================================= */
+  function updateStateViews(state, before) {
+    const changedProgress = Object.keys(state.progress).filter((id) => {
+      const { progress, evidenceStatus } = state.progress[id];
+      const old = before?.progress[id];
+      return progress !== old?.progress || evidenceStatus !== old?.evidenceStatus;
+    });
+    const capabilitiesChanged = changedProgress.some((id) => nodeLookup.has(id));
+    const changedProjects = changedProgress.filter((id) => projectLookup.has(id)).map((id) => projectLookup.get(id));
+    const pinChanged = state.workingNodeId !== before?.workingNodeId;
+    const legacyChanged = !before || JSON.stringify(state.legacyBackup) !== JSON.stringify(before.legacyBackup);
+    const changedResources = DATA.resources.filter(({ id }) => {
+      const current = state.resourceVerification[id];
+      const old = before?.resourceVerification[id];
+      return !before || current?.status !== old?.status || current?.lastVerified !== old?.lastVerified;
+    });
+
+    if (capabilitiesChanged || pinChanged || legacyChanged) {
+      const overview = getOverviewModel(state);
+      updateHome(state, overview);
+      updateMap(state, overview);
+      updateWorkspace(state, overview);
+    } else if (renderedTask) {
+      const note = state.progress[renderedTask]?.note ?? '';
+      if ($('#taskNotes').value !== note) $('#taskNotes').value = note;
+    }
+    if (changedProjects.length) updateProjects(state, changedProjects);
+    if (capabilitiesChanged || changedProjects.length) {
+      updateReadiness(state);
+      renderProgress(state);
+    }
+    if (changedResources.length) {
+      updateResources(state, changedResources);
+      const task = nodeLookup.get(renderedTask);
+      if (task && changedResources.some(({ id }) => task.resourceIds.includes(id)
+        || task.resourceIds.some((mappedId) => resources.get(mappedId)?.alternativeId === id))) {
+        renderWorkspaceResources(task, state);
+      }
+    }
+    if ($('#settingsPanel').open) renderCheckpoint(false, state);
+    previousState = state;
+  }
+
+  function renderAll() {
+    updateStateViews(getState());
+  }
 
   function openNode(nodeId) {
-    switchView('map');
-    closeSearchPanel();
-    closeSidebar();
-
-    setTimeout(() => {
-      const card = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
-      if (!card) return;
-
-      const filterEl = $('#mapStatusFilter');
-      if (filterEl && filterEl.value !== 'all') {
-        filterEl.value = 'all';
-        applyMapFilter();
-      }
-
-      card.closest('.phase-card')?.setAttribute('open', '');
-      card.closest('.parallel-track-details')?.setAttribute('open', '');
-      card.open = true;
-
-      const headerOffset = 80;
-      const elementPosition = card.getBoundingClientRect().top;
-      const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
-
-      window.scrollTo({ top: Math.max(0, offsetPosition), behavior: 'smooth' });
-      setTimeout(() => card.querySelector('summary')?.focus({ preventScroll: true }), 350);
-    }, 50);
+    navigate(taskLink(nodeId), document.activeElement);
   }
 
   function openProject(projectId) {
-    switchView('projects');
-    closeSearchPanel();
-    closeSidebar();
-
-    setTimeout(() => {
-      const card = document.querySelector(`[data-project-id="${CSS.escape(projectId)}"]`);
-      if (!card) return;
-
-      card.open = true;
-      const headerOffset = 80;
-      const elementPosition = card.getBoundingClientRect().top;
-      const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
-
-      window.scrollTo({ top: Math.max(0, offsetPosition), behavior: 'smooth' });
-      setTimeout(() => card.querySelector('summary')?.focus({ preventScroll: true }), 350);
-    }, 50);
+    navigate(`#projects/${encodeURIComponent(projectId)}`);
   }
 
   function openRole(roleId) {
-    switchView('readiness');
-    closeSearchPanel();
-    closeSidebar();
-
-    setTimeout(() => {
-      const card = document.querySelector(`[data-role-id="${CSS.escape(roleId)}"]`);
-      if (!card) return;
-
-      card.open = true;
-      const headerOffset = 80;
-      const elementPosition = card.getBoundingClientRect().top;
-      const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
-
-      window.scrollTo({ top: Math.max(0, offsetPosition), behavior: 'smooth' });
-      setTimeout(() => card.querySelector('summary')?.focus({ preventScroll: true }), 350);
-    }, 50);
+    navigate(`#readiness/role/${encodeURIComponent(roleId)}`);
   }
 
   function openResource(resourceId) {
-    switchView('resources');
-    closeSearchPanel();
-    closeSidebar();
-
-    setTimeout(() => {
-      const card = document.querySelector(`[data-resource-id="${CSS.escape(resourceId)}"]`);
-      if (!card) return;
-
-      const guide = card.querySelector('details.resource-guide');
-      if (guide) guide.open = true;
-
-      const headerOffset = 80;
-      const elementPosition = card.getBoundingClientRect().top;
-      const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
-
-      window.scrollTo({ top: Math.max(0, offsetPosition), behavior: 'smooth' });
-      setTimeout(() => card.focus({ preventScroll: true }), 350);
-    }, 50);
+    navigate(`#resources/${encodeURIComponent(resourceId)}`);
   }
-
-  /* =========================================================================
-     GLOBAL SEARCH UX REPAIR (RESULTS SURFACE, KEYBOARD ACCESSIBLE)
-     ========================================================================= */
 
   function buildSearchIndex() {
-    const items = [];
-
-    // 1. Nodes (Capabilities)
-    allCapabilityNodes().forEach((node) => {
-      items.push({
-        id: node.id,
-        dest: 'map',
-        type: 'Capability',
-        title: node.name,
-        snippet: node.summary || node.whatIsThis,
-        keywords: [node.id, node.name, node.summary, node.whatIsThis, node.why, node.whyNow, ...(node.teaches || []), ...(node.skip || []), node.handsOnLab?.title, node.completionCheck].join(' ').toLowerCase()
-      });
+    const record = (type, title, hash, snippet, ...terms) => ({
+      type, title, hash, snippet,
+      name: title.toLowerCase(),
+      text: [title, snippet, ...terms].flat(Infinity).join(' ').toLowerCase()
     });
-
-    // 2. Projects
-    DATA.projects.forEach((proj) => {
-      items.push({
-        id: proj.id,
-        dest: 'projects',
-        type: 'Project',
-        title: proj.name,
-        snippet: proj.purpose || proj.direction,
-        keywords: [proj.id, proj.name, proj.purpose, proj.direction, proj.domainBadge, ...(proj.mustProve || []), proj.proof, proj.whyThisProblem].join(' ').toLowerCase()
-      });
-    });
-
-    // 3. Roles
-    DATA.roles.forEach((role) => {
-      items.push({
-        id: role.id,
-        dest: 'readiness',
-        type: 'Career Role',
-        title: role.name,
-        snippet: role.whatItDoes || role.summary,
-        keywords: [role.id, role.name, role.whatItDoes, role.summary, ...(role.searchTitles || []), ...(role.requirements || []), role.interviewExpectations].join(' ').toLowerCase()
-      });
-    });
-
-    // 4. Opportunities
-    DATA.opportunities.forEach((opp) => {
-      items.push({
-        id: opp.id,
-        dest: 'readiness',
-        type: 'Opportunity',
-        title: opp.name,
-        snippet: opp.summary,
-        keywords: [opp.id, opp.name, opp.summary, opp.status, opp.eligibilityWarning, ...(opp.actions || [])].join(' ').toLowerCase()
-      });
-    });
-
-    // 5. YouTube Courses
-    (DATA.youtubeLearning || []).forEach((yt) => {
-      items.push({
-        id: yt.id,
-        dest: 'resources',
-        type: 'YouTube Course',
-        title: yt.title,
-        snippet: `${yt.creator} · ${yt.whySelected}`,
-        keywords: [yt.id, yt.title, yt.creator, yt.whySelected, yt.selectedSections, yt.level].join(' ').toLowerCase()
-      });
-    });
-
-    // 6. Official Resources
-    DATA.resources.forEach((res) => {
-      items.push({
-        id: res.id,
-        dest: 'resources',
-        type: 'Resource',
-        title: res.name,
-        snippet: `${res.creator} · ${res.purpose}`,
-        keywords: [res.id, res.name, res.creator, res.purpose, res.summary, res.why, res.teaches].join(' ').toLowerCase()
-      });
-    });
-
-    // 7. Education & Canada
-    DATA.education.sectionNav.forEach(([secId, secLabel]) => {
-      items.push({
-        id: secId,
-        dest: 'education',
-        type: 'Education & Canada',
-        title: secLabel,
-        snippet: `Strategic decision guidance for ${secLabel}.`,
-        keywords: [secId, secLabel, 'canada', 'education', 'masters', 'visa', 'lakehead', 'pgwp', 'ielts'].join(' ').toLowerCase()
-      });
-    });
-
-    // 8. Glossary
-    (DATA.glossary || []).forEach((glo) => {
-      items.push({
-        id: `glossary-${glo.term}`,
-        dest: 'glossary',
-        type: 'Glossary Term',
-        title: glo.term,
-        snippet: glo.definition,
-        keywords: [glo.term, glo.definition].join(' ').toLowerCase()
-      });
-    });
-
-    return items;
+    return [
+      ...capabilityNodes.flatMap((item) => {
+        const capability = record('Capability', item.name, taskLink(item.id), item.summary,
+          item.id, item.whatIsThis, item.teaches, item.whyNow, item.completionCheck);
+        if (!item.handsOnLab) return [capability];
+        return [capability, record('Lab', item.handsOnLab.title, taskLink(item.id, 'practice'),
+          item.handsOnLab.goal, item.name, item.id, item.handsOnLab.steps)];
+      }),
+      ...DATA.projects.map((item) => record('Project', item.name, `#projects/${encodeURIComponent(item.id)}`,
+        item.purpose, item.id, item.domainBadge, item.direction, item.mustProve)),
+      ...DATA.roles.map((item) => record('Career role', item.name, `#readiness/role/${encodeURIComponent(item.id)}`,
+        item.whatItDoes, item.id, item.searchTitles, item.requirements)),
+      ...DATA.opportunities.map((item) => record('Opportunity', item.name, `#readiness/opportunity/${encodeURIComponent(item.id)}`,
+        item.summary, item.id, item.status, item.actions)),
+      ...DATA.youtubeLearning.map((item) => record('YouTube course', item.title, `#resources/course/${encodeURIComponent(item.id)}`,
+        item.whySelected, item.id, item.creator, item.selectedSections)),
+      ...DATA.resources.map((item) => record('Resource', item.name, `#resources/${encodeURIComponent(item.id)}`,
+        item.purpose, item.id, item.creator, item.summary, item.relevantSections)),
+      ...DATA.glossary.map((item) => record('Glossary term', item.term, `#resources/glossary/${encodeURIComponent(item.term)}`, item.definition)),
+      ...DATA.education.sectionNav.map(([id, title]) => record('Education & Canada', title, `#education/${encodeURIComponent(id)}`, '', id))
+    ];
   }
 
-  let searchIndex = null;
+  let searchIndex;
 
   function performGlobalSearch(query) {
-    const trimmed = query.trim().toLowerCase();
-    const panel = $('#searchResultsPanel');
-    const listEl = $('#searchResultsList');
-    const countEl = $('#searchResultsCount');
-
-    if (!trimmed) {
+    const term = query.trim().toLowerCase();
+    if (!term) {
       closeSearchPanel();
       return;
     }
+    searchIndex ||= buildSearchIndex();
+    const words = term.split(/\s+/);
+    const rank = (item) => {
+      if (item.name === term || decodeRouteId(item.hash.split('/').at(-1)).toLowerCase() === term) return 0;
+      if (item.name.startsWith(term)) return 1;
+      if (item.name.includes(term)) return 2;
+      if (item.text.includes(term)) return 3;
+      return 4;
+    };
+    const matches = searchIndex.filter((item) => words.every((word) => item.text.includes(word)))
+      .sort((first, second) => rank(first) - rank(second));
+    const shown = matches.slice(0, 10);
 
-    if (!searchIndex) {
-      searchIndex = buildSearchIndex();
-    }
-
-    const matches = searchIndex.filter((item) => item.keywords.includes(trimmed)).slice(0, 10);
-
-    if (panel && listEl) {
-      panel.removeAttribute('hidden');
-      if (countEl) countEl.textContent = `${matches.length} result${matches.length === 1 ? '' : 's'} found`;
-
-      if (matches.length === 0) {
-        listEl.innerHTML = `<div class="search-results-empty">No matches found for "<strong>${escapeHTML(trimmed)}</strong>".</div>`;
-      } else {
-        listEl.innerHTML = matches.map((item) => `
-          <button type="button" class="search-result-item" data-search-dest="${escapeHTML(item.dest)}" data-search-id="${escapeHTML(item.id)}" data-search-type="${escapeHTML(item.type)}">
-            <div class="search-result-head">
-              <strong>${escapeHTML(item.title)}</strong>
-              <span class="search-result-dest">${escapeHTML(item.type)}</span>
-            </div>
-            <p class="search-result-snippet">${escapeHTML(item.snippet)}</p>
-          </button>
-        `).join('');
-      }
-    }
+    $('#searchResultsPanel').hidden = false;
+    $('#searchResultsCount').textContent = matches.length > shown.length
+      ? `Top ${shown.length} of ${matches.length} results`
+      : `${matches.length} result${matches.length === 1 ? '' : 's'}`;
+    $('#searchResultsList').innerHTML = shown.length ? shown.map((item) => `
+      <a class="search-result-item" href="${escapeHTML(item.hash)}">
+        <span class="search-result-head"><strong>${escapeHTML(item.title)}</strong><span class="search-result-dest">${escapeHTML(item.type)}</span></span>
+        ${item.snippet ? `<span class="search-result-snippet">${escapeHTML(item.snippet)}</span>` : ''}
+      </a>`).join('') : `<p class="search-results-empty">No results for “${escapeHTML(query.trim())}”.</p>`;
   }
 
-  function closeSearchPanel() {
-    $('#searchResultsPanel')?.setAttribute('hidden', '');
+  function closeSearchPanel(restoreFocus = false) {
+    $('#searchResultsPanel').hidden = true;
+    if (restoreFocus) $('#globalSearch').focus();
   }
 
-  function handleSearchResultClick(dest, targetId, type) {
-    if (dest === 'map') {
-      openNode(targetId);
-    } else if (dest === 'projects') {
-      openProject(targetId);
-    } else if (dest === 'readiness') {
-      if (type === 'Career Role') openRole(targetId);
-      else switchView('readiness');
-    } else if (dest === 'resources') {
-      openResource(targetId);
-    } else if (dest === 'education') {
-      switchView('education');
-      showEducationPanel(targetId, true);
-    } else if (dest === 'glossary') {
-      switchView('home');
-      toast(`Glossary Term: ${targetId.replace('glossary-', '')}`);
-    } else {
-      switchView(dest);
+  function handleSearchKeys(event) {
+    if (event.key === 'Escape' && !$('#searchResultsPanel').hidden) {
+      event.preventDefault();
+      closeSearchPanel(true);
+      return;
     }
-
-    closeSearchPanel();
-    const searchInput = $('#globalSearch');
-    if (searchInput) searchInput.value = '';
+    if ($('#searchResultsPanel').hidden && event.target === $('#globalSearch') && ['ArrowDown', 'Enter'].includes(event.key)) {
+      performGlobalSearch(event.target.value);
+    }
+    if ($('#searchResultsPanel').hidden) return;
+    const results = $$('.search-result-item');
+    if (event.key === 'Enter' && event.target === $('#globalSearch') && results.length) {
+      event.preventDefault();
+      results[0].click();
+    }
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key) || !results.length) return;
+    event.preventDefault();
+    const index = results.indexOf(document.activeElement);
+    const direction = event.key === 'ArrowDown' ? 1 : -1;
+    const next = index < 0 ? (direction > 0 ? 0 : results.length - 1) : (index + direction + results.length) % results.length;
+    results[next].focus();
   }
-
-  /* =========================================================================
-     BACKUPS & EXPORT/IMPORT
-     ========================================================================= */
 
   function downloadBackup() {
     const payload = STORE.exportPayload();
@@ -1628,295 +1460,253 @@
     }
   }
 
-  function closeSidebar() {
-    $('#sidebar')?.classList.remove('open');
-    $('#sidebarOverlay')?.classList.remove('visible');
-    $('#menuButton')?.setAttribute('aria-expanded', 'false');
-    document.body.classList.remove('no-scroll');
+  const mobileNavigation = window.matchMedia('(max-width: 900px)');
+
+  function setSidebarOpen(open, restoreFocus = false) {
+    const sidebar = $('#sidebar');
+    const menu = $('#menuButton');
+    sidebar.classList.toggle('open', open);
+    sidebar.inert = mobileNavigation.matches && !open;
+    $('#sidebarOverlay').classList.toggle('visible', open);
+    menu.setAttribute('aria-expanded', String(open));
+    menu.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+    $('.topbar').inert = open;
+    $('#mainContent').inert = open;
+    $('#backToTop').inert = open;
+    document.body.classList.toggle('no-scroll', open);
+    if (open) ($('.nav-link[aria-current]') || $('.nav-link')).focus();
+    else if (restoreFocus) menu.focus();
   }
 
-  /* =========================================================================
-     EVENT LISTENERS SETUP
-     ========================================================================= */
+  function closeSidebar(restoreFocus = false) {
+    setSidebarOpen(false, restoreFocus);
+  }
+
+  function handleRouteLink(event) {
+    const link = event.target.closest('a[href^="#"]');
+    if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const hash = link.getAttribute('href');
+    if (hash === '#mainContent') {
+      $('#mainContent').focus({ preventScroll: true });
+      return;
+    }
+    if (link.closest('#searchResultsPanel')) $('#globalSearch').value = '';
+    if (link.matches('[data-back-map]') && history.state?.atlasFromMap) {
+      history.back();
+      return;
+    }
+    navigate(hash, link);
+  }
 
   function setupEventListeners() {
-    // Hash navigation
     window.addEventListener('hashchange', handleHashChange);
+    window.addEventListener('atlas:statechange', (event) => updateStateViews(event.detail, previousState));
+    document.addEventListener('click', handleRouteLink);
 
-    // Primary View Link Interception
-    document.addEventListener('click', (event) => {
-      const navLink = event.target.closest('a[href^="#"]');
-      if (navLink) {
-        const hash = navLink.getAttribute('href').replace(/^#/, '');
-        if (VALID_PRIMARY_VIEWS.includes(hash)) {
-          event.preventDefault();
-          switchView(hash, true);
-          closeSidebar();
-        } else if (hash === 'checkpoint') {
-          event.preventDefault();
-          openSettingsPanel();
-          closeSidebar();
-        }
-      }
-    });
-
-    // Form inputs and status changes
     document.addEventListener('change', (event) => {
-      const progressId = event.target.dataset.nodeProgress;
-      const statusId = event.target.dataset.nodeStatus;
-      const resourceId = event.target.dataset.resourceStatus;
-      const completionCheckId = event.target.dataset.completionCheck;
+      const { nodeProgress, nodeStatus, resourceStatus, completionCheck } = event.target.dataset;
 
-      if (progressId) {
-        STORE.setNodeState(progressId, { progress: event.target.value });
-        toast(`${DATA.progressLabels[event.target.value]} saved.`);
-      }
-      if (statusId) {
-        STORE.setNodeState(statusId, { evidenceStatus: event.target.value });
-        toast(`Evidence status updated to ${DATA.statusLabels[event.target.value]}.`);
-      }
-      if (completionCheckId) {
+      if (nodeProgress) {
+        STORE.setNodeState(nodeProgress, { progress: event.target.value });
+        toast(`Progress saved · ${DATA.progressLabels[event.target.value]}`);
+      } else if (nodeStatus) {
+        STORE.setNodeState(nodeStatus, { evidenceStatus: event.target.value });
+        toast('Evidence status saved.');
+      } else if (completionCheck) {
         const nextProgress = event.target.checked ? 'completed' : 'in-progress';
-        STORE.setNodeState(completionCheckId, { progress: nextProgress });
-        toast(event.target.checked ? 'Capability marked completed!' : 'Capability marked in progress.');
-      }
-      if (resourceId) {
-        STORE.setResourceVerification(resourceId, { status: event.target.value, lastVerified: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) });
-        toast('Resource verification state updated.');
+        STORE.setNodeState(completionCheck, { progress: nextProgress });
+        toast(event.target.checked ? 'Capability completed.' : 'Capability marked in progress.');
+      } else if (resourceStatus) {
+        const lastVerified = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        STORE.setResourceVerification(resourceStatus, { status: event.target.value, lastVerified });
+        toast('Resource verification saved.');
       }
     });
 
     document.addEventListener('input', (event) => {
-      const noteId = event.target.dataset.nodeNote;
-      if (noteId) saveNodeNote(noteId, event.target.value);
+      const id = event.target.dataset.nodeNote;
+      if (id) STORE.setNodeState(id, { note: event.target.value }, false);
     });
 
     document.addEventListener('click', (event) => {
-      const openNodeButton = event.target.closest('[data-open-node]');
-      const openProjectButton = event.target.closest('[data-open-project]');
-      const openRoleButton = event.target.closest('[data-open-role]');
-      const pinButton = event.target.closest('[data-pin-node]');
-      const unpinButton = event.target.closest('[data-unpin-node]');
-      const pinToggleButton = event.target.closest('[data-pin-toggle]');
-      const educationTab = event.target.closest('[data-education-tab]');
-      const searchResultItem = event.target.closest('.search-result-item');
-
-      if (openNodeButton) openNode(openNodeButton.dataset.openNode);
-      if (openProjectButton) openProject(openProjectButton.dataset.openProject);
-      if (openRoleButton) openRole(openRoleButton.dataset.openRole);
-
-      if (pinButton) {
-        STORE.setWorkingNode(pinButton.dataset.pinNode);
-        toast('Task pinned to dashboard!');
-      }
-      if (unpinButton) {
-        STORE.clearWorkingNode();
-        toast('Task unpinned.');
-      }
-      if (pinToggleButton) {
-        const targetId = pinToggleButton.dataset.pinToggle;
-        if (STORE.getWorkingNode() === targetId) {
+      const pin = event.target.closest('[data-pin-toggle]');
+      if (pin) {
+        if (STORE.getWorkingNode() === pin.dataset.pinToggle) {
           STORE.clearWorkingNode();
           toast('Task unpinned.');
         } else {
-          STORE.setWorkingNode(targetId);
-          toast('Task pinned to dashboard!');
+          STORE.setWorkingNode(pin.dataset.pinToggle);
+          toast('Task pinned to Overview.');
         }
       }
 
-      if (educationTab) {
-        showEducationPanel(educationTab.dataset.educationTab, true);
-      }
-
-      if (searchResultItem) {
-        handleSearchResultClick(
-          searchResultItem.dataset.searchDest,
-          searchResultItem.dataset.searchId,
-          searchResultItem.dataset.searchType
-        );
-      }
+      const educationTab = event.target.closest('[data-education-tab]');
+      if (educationTab) showEducationPanel(educationTab.dataset.educationTab);
+      if (!event.target.closest('.search-shell')) closeSearchPanel();
     });
 
-    // Education mobile dropdown sync
-    $('#educationMobileSelect')?.addEventListener('change', (event) => {
-      showEducationPanel(event.target.value, false);
-    });
-
-    $('#mapStatusFilter')?.addEventListener('change', applyMapFilter);
-    $('#resourceStageFilter')?.addEventListener('change', renderResources);
-    $('#resourceStatusFilter')?.addEventListener('change', renderResources);
-
-    $('#educationSubnav')?.addEventListener('keydown', (event) => {
+    $('#educationMobileSelect').addEventListener('change', (event) => showEducationPanel(event.target.value));
+    $('#educationSubnav').addEventListener('keydown', (event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       const tabs = $$('[data-education-tab]');
       const currentIndex = tabs.indexOf(document.activeElement);
       if (currentIndex < 0) return;
       event.preventDefault();
-      const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-      tabs[nextIndex].focus();
+      const direction = event.key === 'ArrowRight' ? 1 : -1;
+      let nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
+      if (event.key === 'Home') nextIndex = 0;
+      if (event.key === 'End') nextIndex = tabs.length - 1;
       showEducationPanel(tabs[nextIndex].dataset.educationTab);
+      tabs[nextIndex].focus();
     });
 
-    // Search input
-    $('#globalSearch')?.addEventListener('input', debounce((event) => {
-      performGlobalSearch(event.target.value);
-    }, 100));
+    $('#mapStatusFilter').addEventListener('change', applyMapFilter);
+    for (const filter of ['#resourceStageFilter', '#resourceStatusFilter']) {
+      $(filter).addEventListener('change', () => {
+        revealedResourceId = null;
+        applyResourceFilters();
+      });
+    }
 
-    $('#globalSearch')?.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        event.currentTarget.value = '';
-        closeSearchPanel();
-        event.currentTarget.blur();
-      }
+    $('#globalSearch').addEventListener('input', (event) => performGlobalSearch(event.target.value));
+    $('.search-shell').addEventListener('keydown', handleSearchKeys);
+    $('#searchResultsClose').addEventListener('click', () => closeSearchPanel(true));
+
+    $('#themeToggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+
+    $('#menuButton').addEventListener('click', () => setSidebarOpen(true));
+    $('#sidebarOverlay').addEventListener('click', () => closeSidebar(true));
+    mobileNavigation.addEventListener('change', () => closeSidebar());
+
+    const settingsPanel = $('#settingsPanel');
+    $('#openSettingsButton').addEventListener('click', (event) => {
+      const invoker = mobileNavigation.matches ? $('#menuButton') : event.currentTarget;
+      closeSidebar();
+      openSettingsPanel(invoker);
+    });
+    $('#settingsPanelClose').addEventListener('click', closeSettingsPanel);
+    settingsPanel.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      closeSettingsPanel();
+    });
+    settingsPanel.addEventListener('click', (event) => {
+      if (event.target !== settingsPanel) return;
+      const { left, right, top, bottom } = settingsPanel.getBoundingClientRect();
+      if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) closeSettingsPanel();
     });
 
-    $('#searchResultsClose')?.addEventListener('click', closeSearchPanel);
-
-    // Close search panel when clicking outside
-    document.addEventListener('click', (event) => {
-      if (!event.target.closest('.search-control') && !event.target.closest('#searchResultsPanel')) {
-        closeSearchPanel();
-      }
-    });
-
-    $('#expandAllNodes')?.addEventListener('click', (event) => {
-      const nodes = $$('.node-card:not([hidden])');
-      const shouldOpen = nodes.some((node) => !node.open);
-      nodes.forEach((item) => { item.open = shouldOpen; });
-      event.currentTarget.textContent = shouldOpen ? 'Collapse all' : 'Expand all';
-    });
-
-    $('#themeToggle')?.addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
-
-    // Mobile Drawer
-    $('#menuButton')?.addEventListener('click', () => {
-      const isOpen = !$('#sidebar').classList.contains('open');
-      $('#sidebar').classList.toggle('open', isOpen);
-      $('#sidebarOverlay').classList.toggle('visible', isOpen);
-      $('#menuButton').setAttribute('aria-expanded', String(isOpen));
-      document.body.classList.toggle('no-scroll', isOpen);
-    });
-
-    $('#sidebarOverlay')?.addEventListener('click', closeSidebar);
-    $$('.nav-link').forEach((link) => link.addEventListener('click', closeSidebar));
-
-    // Settings Panel Controls
-    $('#openSettingsButton')?.addEventListener('click', openSettingsPanel);
-    $('#settingsPanelClose')?.addEventListener('click', closeSettingsPanel);
-    $('#settingsPanelOverlay')?.addEventListener('click', closeSettingsPanel);
-
-    // Backups & Snapshots
-    const handleBackupExport = () => downloadBackup();
-    $('#exportButton')?.addEventListener('click', handleBackupExport);
-    $('#exportButtonPanel')?.addEventListener('click', handleBackupExport);
-
-    const handleImportClick = () => $('#importFile')?.click();
-    $('#importButton')?.addEventListener('click', handleImportClick);
-    $('#importButtonPanel')?.addEventListener('click', () => $('#importFilePanel')?.click());
-
-    const handleFileImport = async (event) => {
-      const file = event.target.files?.[0];
+    $('#exportButton').addEventListener('click', downloadBackup);
+    $('#importButton').addEventListener('click', () => $('#importFile').click());
+    $('#importFile').addEventListener('change', async (event) => {
+      const input = event.currentTarget;
+      const file = input.files?.[0];
       if (!file) return;
       try {
-        const payload = JSON.parse(await file.text());
-        STORE.importPayload(payload);
-        toast('ATLAS backup imported and migrated safely.');
+        STORE.importPayload(JSON.parse(await file.text()));
+        toast('ATLAS backup imported.');
       } catch (error) {
         toast(error.message || 'Could not import this backup.');
       } finally {
-        event.target.value = '';
+        input.value = '';
       }
-    };
-    $('#importFile')?.addEventListener('change', handleFileImport);
-    $('#importFilePanel')?.addEventListener('change', handleFileImport);
-
-    const handleResetPrompt = () => {
-      const confirmationInput = $('#resetConfirmation');
-      const confirmButton = $('#confirmResetButton');
-      if (confirmationInput) confirmationInput.value = '';
-      if (confirmButton) confirmButton.disabled = true;
-      $('#resetDialog')?.showModal();
-    };
-    $('#resetButton')?.addEventListener('click', handleResetPrompt);
-    $('#resetButtonPanel')?.addEventListener('click', handleResetPrompt);
-
-    $('#resetConfirmation')?.addEventListener('input', (event) => {
-      const confirmButton = $('#confirmResetButton');
-      if (confirmButton) confirmButton.disabled = event.target.value !== 'RESET';
     });
 
-    $('#resetForm')?.addEventListener('submit', (event) => {
+    $('#resetButton').addEventListener('click', () => {
+      $('#resetConfirmation').value = '';
+      $('#confirmResetButton').disabled = true;
+      $('#resetDialog').showModal();
+    });
+    $('#resetConfirmation').addEventListener('input', (event) => {
+      $('#confirmResetButton').disabled = event.target.value !== 'RESET';
+    });
+    $('#resetForm').addEventListener('submit', (event) => {
       if (event.submitter?.value === 'cancel') return;
       event.preventDefault();
       if ($('#resetConfirmation').value !== 'RESET') return;
       downloadBackup();
       STORE.reset();
-      $('#resetDialog')?.close();
-      toast('ATLAS reset to approved baseline; backup downloaded first.');
+      $('#resetDialog').close();
+      toast('ATLAS reset to the approved baseline after exporting a backup.');
     });
 
-    const handleCheckpointSave = () => renderCheckpoint(true);
-    $('#runCheckpointButton')?.addEventListener('click', handleCheckpointSave);
-    $('#runCheckpointButtonPanel')?.addEventListener('click', handleCheckpointSave);
-
-    $('#backToTop')?.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
-    window.addEventListener('scroll', debounce(() => $('#backToTop')?.classList.toggle('visible', window.scrollY > 400), 50), { passive: true });
+    $('#runCheckpointButton').addEventListener('click', () => renderCheckpoint(true));
+    $('#backToTop').addEventListener('click', () => {
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({ top: 0, behavior: reducedMotion ? 'instant' : 'smooth' });
+      $(`#${activeRoute.view} h1`)?.focus({ preventScroll: true });
+    });
+    window.addEventListener('scroll', debounce(() => $('#backToTop').classList.toggle('visible', window.scrollY > 400), 50), { passive: true });
 
     document.addEventListener('keydown', (event) => {
-      // Search shortcuts
-      if ((event.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) || (event.ctrlKey && event.key.toLowerCase() === 'k') || (event.metaKey && event.key.toLowerCase() === 'k')) {
-        event.preventDefault();
-        $('#globalSearch')?.focus();
-      }
-      // Escape closes settings or mobile drawer
-      if (event.key === 'Escape') {
-        if (!$('#settingsPanel')?.hasAttribute('hidden')) {
-          closeSettingsPanel();
-        } else if ($('#sidebar')?.classList.contains('open')) {
-          closeSidebar();
+      if ($('#sidebar').classList.contains('open')) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeSidebar(true);
+        } else if (event.key === 'Tab') {
+          const controls = $$('#sidebar a, #sidebar button');
+          const first = controls[0];
+          const last = controls.at(-1);
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
         }
+        return;
       }
-    });
-
-    window.addEventListener('atlas:statechange', () => {
-      renderAll();
+      if ($('#settingsPanel').open || $('#resetDialog').open) return;
+      const editing = document.activeElement.matches('input, textarea, select, [contenteditable]');
+      if ((event.key === '/' && !editing) || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) {
+        event.preventDefault();
+        $('#globalSearch').focus();
+        performGlobalSearch($('#globalSearch').value);
+      }
     });
   }
 
   function initialize() {
+    const state = getState();
     setTheme(STORE.getTheme());
+    closeSidebar();
+    renderHomeReference();
     renderMapStatusFilter();
+    renderPhases(state);
+    renderProjects(state);
+    renderReadiness(state);
+    renderProof();
     renderResourceFilters();
-    renderAll();
+    renderResources(state);
+    renderGlossary();
+    renderEducation();
+    renderTrajectory();
+    updateStateViews(state);
+
+    history.scrollRestoration = 'manual';
     setupEventListeners();
-
-    // Initial View setup based on URL hash
-    const initialHash = window.location.hash.replace(/^#/, '');
-    if (initialHash === 'checkpoint') {
-      switchView('home', false);
-      openSettingsPanel();
-    } else if (VALID_PRIMARY_VIEWS.includes(initialHash)) {
-      switchView(initialHash, false);
-    } else {
-      switchView('home', false);
-    }
-
-    window.ATLAS = {
-      data: DATA,
-      store: STORE,
-      render: renderAll,
-      getOverviewModel,
-      getCurrentActionModel,
-      openNode,
-      openProject,
-      openRole,
-      switchView,
-      checkpoint: () => renderCheckpoint(true),
-      export: STORE.exportPayload
-    };
+    applyRoute(location.hash, { initial: true });
   }
 
-  initialize();
-})();
+  window.ATLAS = {
+    data: DATA,
+    store: STORE,
+    render: renderAll,
+    getOverviewModel,
+    getCurrentActionModel: getOverviewModel,
+    openNode,
+    openProject,
+    openRole,
+    openResource,
+    switchView,
+    checkpoint: () => renderCheckpoint(true),
+    export: STORE.exportPayload
+  };
 
-//testing
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initialize, { once: true });
+  } else {
+    initialize();
+  }
+})();

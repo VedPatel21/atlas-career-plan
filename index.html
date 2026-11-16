@@ -25,15 +25,13 @@
   <a class="skip-link" href="#mainContent">Skip to main content</a>
 
   <div class="app-shell">
-    <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+    <aside class="sidebar" id="sidebar">
       <div class="brand-block">
         <a class="brand" href="#home" aria-label="ATLAS home">ATLAS</a>
         <p>Career Architecture</p>
-        <span class="version-pill" id="roadmapVersion">v2.4</span>
       </div>
 
-      <nav class="sidebar-nav" id="sidebarNav">
-        <p class="nav-eyebrow">Navigation</p>
+      <nav class="sidebar-nav" id="sidebarNav" aria-label="Primary navigation">
         <a class="nav-link" href="#home" data-section="home"><span>⌂</span><span>Overview</span></a>
         <a class="nav-link" href="#map" data-section="map"><span>◇</span><span>Career Map</span></a>
         <a class="nav-link" href="#projects" data-section="projects"><span>▱</span><span>Projects</span></a>
@@ -42,136 +40,104 @@
         <a class="nav-link" href="#education" data-section="education"><span>△</span><span>Education &amp; Canada</span></a>
       </nav>
 
-      <div class="sidebar-progress">
-        <div>
-          <span>Baseline capability coverage</span>
-          <strong id="overallProgressText">0%</strong>
-        </div>
-        <div class="progress-track" aria-hidden="true"><span id="overallProgressFill"></span></div>
-        <p id="overallProgressDetail">Starting Capability Snapshot</p>
-        <div class="action-progress"><span>ATLAS actions completed</span><strong id="actionProgressText">0</strong></div>
-      </div>
-
       <div class="sidebar-utility">
-        <button class="sidebar-settings-btn" id="openSettingsButton" type="button" aria-label="Open Career GPS Check-In &amp; Settings">
+        <button class="sidebar-settings-btn" id="openSettingsButton" type="button">
           <span aria-hidden="true">⚙</span> Settings &amp; Backup
         </button>
       </div>
     </aside>
 
-    <button class="sidebar-overlay" id="sidebarOverlay" aria-label="Close navigation"></button>
+    <button class="sidebar-overlay" id="sidebarOverlay" type="button" tabindex="-1" aria-label="Close navigation"></button>
 
     <header class="topbar">
-      <button class="icon-button menu-button" id="menuButton" aria-label="Open navigation" aria-expanded="false">☰</button>
-      <div class="topbar-context">
-        <span class="eyebrow">Current view</span>
-        <strong id="currentViewLabel">Overview</strong>
+      <button class="icon-button menu-button" id="menuButton" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">☰</button>
+      <strong class="topbar-context" id="currentViewLabel">Overview</strong>
+      <div class="search-shell">
+        <label class="search-control" for="globalSearch">
+          <span aria-hidden="true">⌕</span>
+          <input id="globalSearch" type="search" aria-label="Search ATLAS" placeholder="Search ATLAS" autocomplete="off" aria-controls="searchResultsPanel">
+          <kbd aria-hidden="true">/</kbd>
+        </label>
+        <section class="search-results-panel" id="searchResultsPanel" aria-label="Search results" hidden>
+          <div class="search-results-header">
+            <span id="searchResultsCount" role="status"></span>
+            <button class="search-results-close" id="searchResultsClose" type="button" aria-label="Close search results">✕</button>
+          </div>
+          <div class="search-results-list" id="searchResultsList"></div>
+        </section>
       </div>
-      <label class="search-control" for="globalSearch">
-        <span aria-hidden="true">⌕</span>
-        <input id="globalSearch" type="search" placeholder="Search capabilities, labs, courses, roles…" autocomplete="off">
-        <kbd>/</kbd>
-      </label>
-      <button class="icon-button" id="themeToggle" aria-label="Switch to light theme" title="Toggle theme">☾</button>
+      <button class="icon-button" id="themeToggle" type="button" aria-label="Switch to light theme" title="Toggle theme">☾</button>
     </header>
 
-    <!-- Search Results Panel -->
-    <div class="search-results-panel" id="searchResultsPanel" hidden role="listbox" aria-label="Search results">
-      <div class="search-results-header">
-        <span id="searchResultsCount"></span>
-        <button class="search-results-close" id="searchResultsClose" type="button" aria-label="Close search results">✕</button>
-      </div>
-      <div class="search-results-list" id="searchResultsList"></div>
-    </div>
-
     <main class="main-content" id="mainContent" tabindex="-1">
-      <!-- PRIMARY VIEWS — only one visible at a time via JS view switching -->
-
-      <!-- 1. OVERVIEW -->
-      <section class="view-section" id="home" data-view-title="Overview" role="main">
-        <!-- compact identity/position context at top -->
-        <div class="overview-position-bar" id="positionPanel"></div>
-
-        <!-- Active pinned task or recommended next (ACTION-FIRST) -->
-        <div class="working-task-container" id="workingTaskContainer"></div>
-
-        <!-- Focus Mission + Upcoming Queue -->
-        <div class="focus-layout">
-          <div id="focusMission"></div>
-          <div id="focusNextQueue"></div>
-        </div>
-
-        <!-- Hero intro (secondary — below the action) -->
-        <div class="overview-intro-block">
-          <div class="hero-copy">
-            <span class="kicker">Engineering Career GPS · Learner-Guided</span>
-            <h1>Know what to build next.<br><span>Master the concepts. Prove the code.</span></h1>
-            <p class="hero-lede">ATLAS guides you from your current foundation toward professional Software, ML, and AI Engineering through hands-on projects, verified learning, and self-assessed capability checks.</p>
-            <div class="hero-actions">
-              <a class="button button-primary" href="#map" data-nav-link>Explore Career Map <span>→</span></a>
-              <a class="button button-secondary" href="#projects" data-nav-link>View Projects</a>
+      <section class="view-section overview-view" id="home" aria-labelledby="overviewTitle">
+        <header class="view-heading">
+          <h1 id="overviewTitle" tabindex="-1">Overview</h1>
+        </header>
+        <div class="learning-overview">
+          <article class="continue-card" id="workingTaskContainer" aria-labelledby="currentTaskTitle">
+            <div class="continue-meta">
+              <span id="currentTaskTrack"></span>
+              <span class="status-badge" id="currentTaskProgress"></span>
             </div>
+            <h2 id="currentTaskTitle"></h2>
+            <p id="currentTaskSummary"></p>
+            <a class="button button-primary" id="continueLearning" href="#map">Continue learning <span aria-hidden="true">→</span></a>
+          </article>
+          <section class="upcoming-card" aria-labelledby="upcomingTitle">
+            <h2 id="upcomingTitle">What comes next?</h2>
+            <ol id="focusNextQueue"></ol>
+            <p id="upcomingEmpty" hidden>No other tasks are queued.</p>
+          </section>
+        </div>
+        <details class="reference-disclosure overview-reference">
+          <summary>Starting position and evidence</summary>
+          <div class="reference-body">
+            <div id="positionPanel"></div>
+            <p class="overview-metrics"><span>Baseline capability coverage <strong id="overallProgressText"></strong></span><span>ATLAS actions completed <strong id="actionProgressText"></strong></span></p>
+            <div class="baseline-audit" id="baselineAudit"></div>
+            <p class="migration-notice" id="migrationNotice" hidden></p>
           </div>
-        </div>
-
-        <!-- Supporting context grid -->
-        <div class="focus-support-grid">
-          <div id="focusVerify"></div>
-          <div id="focusProject"></div>
-          <div id="focusRole"></div>
-          <a class="focus-support-card focus-explore" href="#map" data-nav-link><span class="kicker">Full context</span><h3>Explore the Roadmap</h3><p>See all 9 phases and the parallel Professional SWE Depth track.</p><strong>Open Career Map →</strong></a>
-        </div>
-
-        <!-- AI-Native Engineering Principle (important but not above the action) -->
-        <div class="ai-native-banner" id="aiNativeBanner"></div>
-
-        <!-- Current-state answer cards (reference) -->
-        <details class="overview-section-disclosure" open>
-          <summary class="disclosure-summary">
-            <span>Where am I right now?</span>
-            <span class="chevron">›</span>
-          </summary>
-          <div class="answer-grid" id="answerGrid"></div>
         </details>
-
-        <!-- Evidence Audit (reference — collapsed by default) -->
-        <details class="overview-section-disclosure">
-          <summary class="disclosure-summary">
-            <span>Evidence Audit — approved baseline calibration</span>
-            <span class="chevron">›</span>
-          </summary>
-          <div class="baseline-audit" id="baselineAudit"></div>
+        <details class="reference-disclosure overview-reference">
+          <summary>AI-native engineering principles</summary>
+          <div class="reference-body" id="aiNativeBanner"></div>
         </details>
-
-        <div class="migration-notice" id="migrationNotice" hidden></div>
       </section>
 
-      <!-- 2. CAREER MAP -->
-      <section class="view-section" id="map" data-view-title="Career Map">
-        <div class="section-heading">
-          <div><span class="kicker">Dependency Graph · 9 Phases + SWE Depth</span><h2>Career Map</h2><p>Move forward when you can demonstrate the capability—not when an arbitrary calendar says you should.</p></div>
-          <div class="filter-bar" role="group" aria-label="Filter career map">
-            <select id="mapStatusFilter" aria-label="Filter by capability status"><option value="all">All states</option></select>
-            <button class="button button-secondary button-small" id="expandAllNodes" type="button">Expand all</button>
-          </div>
-        </div>
-        <div class="architecture-strip" id="architectureStrip"></div>
+      <section class="view-section map-view" id="map" hidden aria-labelledby="mapTitle">
+        <header class="view-heading map-heading">
+          <div><h1 id="mapTitle" tabindex="-1">Career Map</h1><p>Follow the engineering phases or explore the parallel Software Engineering Depth track.</p></div>
+          <label class="map-filter" for="mapStatusFilter">Show
+            <select id="mapStatusFilter"><option value="all">All capabilities</option></select>
+          </label>
+        </header>
+        <p class="empty-state" id="mapEmpty" hidden>No capabilities match this filter.</p>
         <div class="phase-list" id="phaseList"></div>
         <div class="horizontal-track" id="sweDepthTrack"></div>
+        <details class="reference-disclosure map-reference" id="careerReferences">
+          <summary>Engineering trajectory and evidence</summary>
+          <div class="reference-body">
+            <section aria-labelledby="proofTitle"><h2 id="proofTitle" tabindex="-1">Learning and evidence loop</h2><div id="proofLoop"></div></section>
+            <section aria-labelledby="trajectoryTitle"><h2 id="trajectoryTitle" tabindex="-1">Career trajectory</h2><div class="trajectory-list" id="trajectoryList"></div></section>
+          </div>
+        </details>
       </section>
 
+      <section class="view-section workspace-view" id="learn" hidden aria-label="Learning workspace"></section>
+
       <!-- 3. PROJECTS -->
-      <section class="view-section" id="projects" data-view-title="Projects">
+      <section class="view-section" id="projects" hidden data-view-title="Projects">
         <div class="section-heading">
-          <div><span class="kicker">5 Progressive Milestones</span><h2>Project Ladder</h2><p>Authentic engineering milestones. Each project proves a larger slice of systems, data, and ML capability than the last.</p></div>
+          <div><h1 tabindex="-1">Projects</h1><p>Five milestones, from improving an existing application to building production AI systems.</p></div>
         </div>
         <div class="project-ladder" id="projectLadder"></div>
       </section>
 
       <!-- 4. CAREERS (Merged Roles + Opportunities + Experience + Live Search) -->
-      <section class="view-section" id="readiness" data-view-title="Careers">
+      <section class="view-section" id="readiness" hidden data-view-title="Careers">
         <div class="section-heading">
-          <div><span class="kicker">Role Launchpad · Opportunities · Experience</span><h2>Career Readiness &amp; Opportunities</h2><p>Turn capability evidence into targeted job-search and internship action with dynamic fit scoring.</p></div>
+          <div><h1 tabindex="-1">Careers</h1><p>See how your capabilities and projects align with roles you can explore.</p></div>
         </div>
         <div class="principle-banner">
           <strong>Application Principle</strong>
@@ -185,14 +151,14 @@
         <div class="readiness-grid" id="readinessGrid"></div>
 
         <div class="careers-subheading careers-subheading--spaced">
-          <h3>Verified Opportunities</h3>
+          <h2 id="opportunitiesTitle" tabindex="-1">Opportunities</h2>
           <p>Calendar opportunities with official verification dates. Reverify deadlines before acting.</p>
         </div>
         <div class="opportunity-list" id="opportunityGrid"></div>
         <div class="discovery-card" id="discoveryStack"></div>
 
         <div class="careers-subheading careers-subheading--spaced">
-          <h3>Compounding Experience</h3>
+          <h2 id="experienceTitle" tabindex="-1">Engineering experience</h2>
           <p>Real engineering, open source, and interview readiness compound across every stage.</p>
         </div>
         <div class="experience-grid" id="experienceGrid"></div>
@@ -200,51 +166,40 @@
         <div class="internship-checklist-card" id="internshipChecklistContainer"></div>
       </section>
 
-      <!-- Hidden sections for backward compatibility, searchability, and test coverage -->
-      <section class="view-section" id="experience" style="display: none;" aria-hidden="true"></section>
-      <section class="view-section" id="proof" style="display: none;" aria-hidden="true">
-        <div id="proofLoop"></div>
-      </section>
-      <section class="view-section" id="glossary" style="display: none;" aria-hidden="true">
-        <div class="glossary-grid" id="glossaryGrid"></div>
-      </section>
-      <section class="view-section" id="opportunities" style="display: none;" aria-hidden="true"></section>
+      <section class="view-section" id="resources" hidden data-view-title="Learn / Resources">
+        <header class="view-heading">
+          <h1 tabindex="-1">Resource Library</h1>
+          <nav class="section-jump-links" aria-label="Resource Library sections">
+            <a href="#resources/references">References</a>
+            <a href="#resources/courses">Courses</a>
+            <a href="#glossary">Glossary</a>
+          </nav>
+        </header>
 
-      <!-- 5. LEARN / RESOURCES -->
-      <section class="view-section" id="resources" data-view-title="Learn / Resources">
-        <div class="section-heading resources-heading-sticky">
-          <div><span class="kicker">Curated Learning Paths</span><h2>Resource &amp; Course Library</h2><p>One primary resource at a time. Selected chapters and hands-on labs matter more than passive video completion.</p></div>
-          <div class="filter-bar resources-filter-bar" role="group" aria-label="Filter resources">
+        <div class="section-heading resource-library-heading">
+          <h2 id="referencesTitle" tabindex="-1">Official and reference resources</h2>
+          <div class="filter-bar" role="group" aria-label="Filter resources">
             <select id="resourceStageFilter" aria-label="Filter resources by stage"><option value="all">All stages</option></select>
             <select id="resourceStatusFilter" aria-label="Filter resources by verification"><option value="all">All verification states</option></select>
           </div>
         </div>
-
-        <div class="youtube-learning-section" id="youtubeLearningSection">
-          <div class="sub-heading-bar">
-            <div>
-              <span class="kicker">Free Video Learning</span>
-              <h3>Verified YouTube Courses &amp; Deep Dives</h3>
-              <p>Top-tier, verified courses mapped to roadmap capabilities with recommended chapters.</p>
-            </div>
-          </div>
-          <div class="youtube-course-grid" id="youtubeCourseGrid"></div>
-        </div>
-
-        <div class="sub-heading-bar sub-heading-bar--spaced">
-          <div>
-            <span class="kicker">Official Documentation &amp; Books</span>
-            <h3>Official &amp; Reference Library</h3>
-          </div>
-        </div>
         <div class="resource-grid" id="resourceGrid"></div>
         <p class="empty-state" id="resourceEmpty" hidden>No resources match these filters.</p>
+
+        <details class="reference-disclosure library-disclosure" id="youtubeLearningSection">
+          <summary id="coursesTitle">YouTube courses</summary>
+          <div class="reference-body youtube-course-grid" id="youtubeCourseGrid"></div>
+        </details>
+        <details class="reference-disclosure library-disclosure" id="glossary">
+          <summary id="glossaryTitle">Glossary</summary>
+          <div class="reference-body glossary-grid" id="glossaryGrid"></div>
+        </details>
       </section>
 
       <!-- 6. EDUCATION & CANADA -->
-      <section class="view-section" id="education" data-view-title="Education &amp; Canada">
+      <section class="view-section" id="education" hidden data-view-title="Education &amp; Canada">
         <div class="section-heading">
-          <div><span class="kicker">Secondary Strategic Reference</span><h2>Education &amp; Canada Strategic Map</h2><p>Education, location, and immigration decisions surround the engineering career; they never control its technical progression.</p></div>
+          <div><h1 tabindex="-1">Education &amp; Canada</h1><p>Reference material for education, location, and immigration decisions.</p></div>
         </div>
         <nav class="education-subnav" id="educationSubnav" aria-label="Education and Canada sections" role="tablist"></nav>
         <!-- Mobile select fallback for Education subnav -->
@@ -255,64 +210,34 @@
         <div class="education-layout" id="educationLayout"></div>
       </section>
 
-      <!-- Hidden Trajectory for search & test compatibility -->
-      <section class="view-section" id="trajectory" style="display: none;" aria-hidden="true">
-        <div class="trajectory-list" id="trajectoryList"></div>
-      </section>
-
-      <!-- CHECKPOINT / SETTINGS — now hidden primary section; shown via Settings button as a panel -->
-      <section class="view-section" id="checkpoint" data-view-title="Career GPS Check-In" style="display:none;" aria-hidden="true">
-        <div class="section-heading">
-          <div><span class="kicker">Backup &amp; GPS State</span><h2>Career GPS Check-In &amp; Settings</h2><p>Save progress snapshots, export data, and manage your local-first device storage.</p></div>
-          <button class="button button-primary" id="runCheckpointButton" type="button">Save this snapshot</button>
-        </div>
-        <div class="checkpoint-grid" id="checkpointGrid"></div>
-        <div class="settings-card" style="margin-top: 24px;">
-          <div><span class="kicker">Local-first state</span><h3>Backup and Portability</h3><p>Progress, notes, and checkpoints stay on this device unless you export them.</p></div>
-          <div class="settings-actions">
-            <button class="button button-secondary" id="exportButton" type="button">Export backup</button>
-            <button class="button button-secondary" id="importButton" type="button">Import backup</button>
-            <button class="button button-danger" id="resetButton" type="button">Reset ATLAS</button>
-            <input id="importFile" type="file" accept="application/json,.json" hidden>
-          </div>
-        </div>
-      </section>
     </main>
   </div>
 
-  <!-- Settings Panel (secondary utility surface, not a primary nav destination) -->
-  <div class="settings-panel-overlay" id="settingsPanelOverlay" hidden></div>
-  <aside class="settings-panel" id="settingsPanel" aria-label="Career GPS Check-In &amp; Settings" aria-modal="true" hidden>
+  <dialog class="settings-panel" id="settingsPanel" aria-labelledby="settingsTitle">
     <div class="settings-panel-header">
-      <div>
-        <span class="kicker">Backup &amp; GPS State</span>
-        <h2>Career GPS Check-In &amp; Settings</h2>
-      </div>
-      <button class="icon-button settings-panel-close" id="settingsPanelClose" type="button" aria-label="Close settings">✕</button>
+      <h2 id="settingsTitle">Settings &amp; Backup</h2>
+      <button class="icon-button settings-panel-close" id="settingsPanelClose" type="button" aria-label="Close settings" autofocus>✕</button>
     </div>
     <div class="settings-panel-body">
+      <p>Progress, notes, and checkpoints stay on this device unless you export them.</p>
       <div class="settings-panel-actions-bar">
-        <button class="button button-primary" id="runCheckpointButtonPanel" type="button">Save this snapshot</button>
-        <button class="button button-secondary" id="exportButtonPanel" type="button">Export backup</button>
-        <button class="button button-secondary" id="importButtonPanel" type="button">Import backup</button>
-        <button class="button button-danger" id="resetButtonPanel" type="button">Reset ATLAS</button>
-        <input id="importFilePanel" type="file" accept="application/json,.json" hidden>
+        <button class="button button-primary" id="runCheckpointButton" type="button">Save checkpoint</button>
+        <button class="button button-secondary" id="exportButton" type="button">Export backup</button>
+        <button class="button button-secondary" id="importButton" type="button">Import backup</button>
+        <button class="button button-danger" id="resetButton" type="button">Reset ATLAS</button>
+        <input id="importFile" type="file" accept="application/json,.json" hidden>
       </div>
-      <div class="checkpoint-grid" id="checkpointGridPanel"></div>
-      <div class="settings-local-first-note">
-        <span class="kicker">Local-first state</span>
-        <h3>Backup and Portability</h3>
-        <p>Progress, notes, and checkpoints stay on this device unless you export them.</p>
-      </div>
+      <div class="checkpoint-grid" id="checkpointGrid"></div>
     </div>
-  </aside>
+    <div class="toast-region" id="settingsToastRegion" aria-live="polite" aria-atomic="true"></div>
+  </dialog>
 
   <button class="back-to-top" id="backToTop" type="button" aria-label="Back to top">↑</button>
 
-  <dialog class="dialog dialog-small" id="resetDialog">
+  <dialog class="dialog dialog-small" id="resetDialog" aria-labelledby="resetTitle">
     <form method="dialog" id="resetForm">
       <span class="kicker danger-text">Destructive action</span>
-      <h2>Reset ATLAS?</h2>
+      <h2 id="resetTitle">Reset ATLAS?</h2>
       <p>A backup will be downloaded first. Your preserved legacy snapshot will remain in that file.</p>
       <label>Type <strong>RESET</strong> to continue<input id="resetConfirmation" type="text" autocomplete="off"></label>
       <div class="dialog-actions"><button class="button button-secondary" value="cancel">Cancel</button><button class="button button-danger" id="confirmResetButton" value="default" disabled>Download backup &amp; reset</button></div>
